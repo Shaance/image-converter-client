@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { totalFiles, processedFiles, conversionStatus, ConversionStatus, uploadedFiles } from "./stores";
+  import { totalFiles, processedFiles, conversionStatus, ConversionStatus, uploadedFiles } from "../stores";
   import { fade } from "svelte/transition";
   import ProgressBar from "./ProgressBar.svelte";
 

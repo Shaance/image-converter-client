@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { targetFormat, ConvertFormat } from "./stores";
+  import { targetFormat, ConvertFormat } from "../stores";
   export let onChange = (event) => {
     targetFormat.set(selected);
   };

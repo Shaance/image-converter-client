@@ -1,6 +1,6 @@
 <script lang="ts">
   import { FileDrop } from "svelte-droplet";
-  import { processing } from "./stores";
+  import { processing } from "../stores";
 
   export let handleFiles;
   $: text = $processing

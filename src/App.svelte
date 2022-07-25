@@ -1,17 +1,17 @@
 <script lang="ts">
-  import CustomFileDrop from "./lib/CustomFileDrop.svelte";
   import {
     conversionStatus,
     ConversionStatus,
     processing,
-    downloadLink
+    downloadLink,
   } from "./lib/stores";
-  import Loading from "./lib/Loading.svelte";
-  import DownloadBtn from "./lib/DownloadBtn.svelte";
-  import Toast from "./lib/Toast.svelte";
-  import Dropdown from "./lib/Dropdown.svelte";
   import { handleFiles } from "./lib/convert";
-  import AboutFooter from "./lib/AboutFooter.svelte";
+  import CustomFileDrop from "./lib/components/CustomFileDrop.svelte";
+  import Loading from "./lib/components/Loading.svelte";
+  import DownloadBtn from "./lib/components/DownloadBtn.svelte";
+  import Toast from "./lib/components/Toast.svelte";
+  import Dropdown from "./lib/components/Dropdown.svelte";
+  import AboutFooter from "./lib/components/AboutFooter.svelte";
 </script>
 
 <main>

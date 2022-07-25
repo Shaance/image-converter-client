@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { progress } from "./stores";
+  import { progress } from "../stores";
   import { fade } from 'svelte/transition';
 </script>
 
