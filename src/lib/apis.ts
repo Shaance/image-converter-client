@@ -16,7 +16,7 @@ interface RequestAPIResponseBody {
   getObjectSignedUrl: string;
 }
 
-export async function getStatus(requestId: string, totalFiles: number, resetFn, interval) {
+export async function getStatus(requestId: string, totalFiles: number, resetFn) {
   const options = {
     method: "GET",
   };

@@ -48,21 +48,29 @@ function targetFormatIsValid(files: File[]) {
   })
 }
 
-export async function handleFiles(files: File[]) {
+function validConversionRequest(files: File[]) {
   if (!files) {
-    return;
+    return false
   }
 
   if (!targetFormatIsValid(files)) {
     // @ts-ignore
     window.pushToast("Heic files can only be converted to jpeg and png format");
-    return;
+    return false
   } 
 
   if (files.length > 50) {
     // @ts-ignore
     window.pushToast("Can't upload more than 50 pictures");
-    return;
+    return false
+  }
+
+  return true
+}
+
+export async function handleFiles(files: File[]) {
+  if (!validConversionRequest(files)) {
+    return
   }
 
   if (get(downloadLink)) {
@@ -80,7 +88,7 @@ export async function handleFiles(files: File[]) {
   }
   conversionStatus.set(ConversionStatus.CONVERTING);
   interval.set(setInterval(
-    () => getStatus(get(requestId), get(totalFiles), resetState, interval),
+    () => getStatus(get(requestId), get(totalFiles), resetState),
     1000
   ));
   try {
