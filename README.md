@@ -18,5 +18,4 @@ From any to any of these format:
 It all started from a local version (everything running in the browser), if you need an heic to jpeg / png running locally go [here](https://heic.hashcode.dev/)
 
 ## Link
-
 https://images.hashcode.dev/
