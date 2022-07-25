@@ -11,7 +11,7 @@
     "image/heic",
     "image/png",
     "image/jpeg",
-    "image/png",
+    "image/jpg",
     "image/gif",
     "image/tif",
     "image/tiff",
