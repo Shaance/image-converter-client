@@ -11,6 +11,7 @@
   import Toast from "./lib/Toast.svelte";
   import Dropdown from "./lib/Dropdown.svelte";
   import { handleFiles } from "./lib/convert";
+  import AboutFooter from "./lib/AboutFooter.svelte";
 </script>
 
 <main>
@@ -25,6 +26,7 @@
     {/if}
   {/if}
   <Toast retainMs={5000} />
+  <AboutFooter />
 </main>
 
 <style>
