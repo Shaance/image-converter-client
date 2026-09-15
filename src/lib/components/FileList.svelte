@@ -41,7 +41,7 @@
 <section aria-labelledby="file-count">
   <div class="toolbar">
     <div class="summary" aria-live="polite">
-      <h2 id="file-count" tabindex="-1" bind:this={header}>{queue.fileCount} files</h2>
+      <h2 id="file-count" tabindex="-1" bind:this={header}>{queue.fileCount} {queue.fileCount === 1 ? 'file' : 'files'}</h2>
       <span>{#if !queue.settled}{formatBytes(queue.bytesIn)} in · {queue.doneCount} of {queue.fileCount} done
         {:else if queue.failedCount}{queue.doneCount} ready · {queue.failedCount} need attention
         {:else}{formatBytes(queue.bytesIn)} → {formatBytes(queue.bytesOut)} · all done{/if}</span>
