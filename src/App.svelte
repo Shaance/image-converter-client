@@ -10,6 +10,8 @@
   import Icons from './lib/components/Icons.svelte';
   let queue = $state<ReturnType<typeof createQueue>>();
   let unavailable = $state(!supported());
+  // Files added while the canvas probe is still running; handed to the queue as soon as it exists.
+  let pending: File[] = [];
   onMount(() => {
     let cancelled = false;
     if (!unavailable) {
@@ -19,6 +21,7 @@
         try {
           const worker = new Worker(new URL('./lib/pipeline.worker.ts', import.meta.url), { type: 'module' });
           queue = createQueue({ worker, maxArea });
+          if (pending.length) void queue.add(pending.splice(0));
         } catch { unavailable = true; }
       });
     }
@@ -43,10 +46,10 @@
     </section>
   {/if}
   <div class="drop-reveal reveal" style="--delay: calc(var(--stagger) * 2)">
-    <DropZone bind:this={dropZone} variant={queue?.fileCount ? 'compact' : 'hero'} disabled={!queue}
+    <DropZone bind:this={dropZone} variant={queue?.fileCount ? 'compact' : 'hero'} ready={!!queue}
       message={unavailable ? 'On-device conversion needs a newer browser (Safari 17, Chrome 80 or Firefox 114).'
         : queue?.workerStatus.status === 'unavailable' ? 'The converter stopped. Reload the page to continue.' : undefined}
-      onadd={files => { void queue?.add(files); }} />
+      onadd={files => { if (queue) void queue.add(files); else pending.push(...files); }} />
   </div>
   {#if !queue?.fileCount}
     <div class="empty-formats"><span class="label">Convert to</span>

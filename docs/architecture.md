@@ -36,7 +36,9 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
   main-thread fallback.
 - Large images: the maximum canvas area is probed once at startup on the main
   thread with `canvas-size` (`maxArea({ usePromise: true, useWorker: true })`,
-  it refuses to run inside a worker) and passed to the pipeline worker. A decoded
+  it refuses to run inside a worker) and passed to the pipeline worker. While it
+  runs the drop zone reads "Getting ready…" but stays live: files added before
+  the queue exists are buffered in `App.svelte` and added once it is. A decoded
   bitmap whose pixel count exceeds it is not drawn; the row reads "Too large for
   this browser (48 MP, limit 16 MP)" with the action "Convert at 16 MP" that
   re-decodes with `createImageBitmap(..., { resizeWidth, resizeHeight,
