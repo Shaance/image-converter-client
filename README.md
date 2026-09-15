@@ -37,8 +37,6 @@ reduced size instead of failing silently.
 A few things are deliberately out of scope: inputs a browser cannot decode
 (RAW, PSD, and so on), animated output, and any server-side processing.
 
-The design notes and state model live in [docs/architecture.md](docs/architecture.md).
-
 ## Requirements
 
 A browser with module workers, `OffscreenCanvas` and `createImageBitmap`:
