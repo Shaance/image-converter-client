@@ -7,9 +7,20 @@ vi.mock('@jsquash/webp/encode.js', () => ({
 const jsquash = vi.hoisted(() => ({
   avif: { init: vi.fn(async () => ({})), encode: vi.fn(async () => new TextEncoder().encode('AVIF bytes').buffer) },
   jxl: { init: vi.fn(async () => ({})), encode: vi.fn(async () => new TextEncoder().encode('JXL bytes').buffer) },
+  jpeg: { init: vi.fn(async () => ({})), encode: vi.fn(async () => new TextEncoder().encode('MozJPEG bytes').buffer) },
+  oxipng: { init: vi.fn(async () => ({})),
+    optimise: vi.fn((_data: Uint8Array, _level: number, _interlace: boolean, _alpha: boolean) => new TextEncoder().encode('OxiPNG bytes')) },
 }));
 vi.mock('@jsquash/avif/encode.js', () => ({ default: jsquash.avif.encode, init: jsquash.avif.init }));
 vi.mock('@jsquash/jxl/encode.js', () => ({ default: jsquash.jxl.encode, init: jsquash.jxl.init }));
+vi.mock('@jsquash/jpeg/encode.js', () => ({ default: jsquash.jpeg.encode, init: jsquash.jpeg.init }));
+vi.mock('@jsquash/oxipng/codec/pkg/squoosh_oxipng.js', () => ({ default: jsquash.oxipng.init, optimise: jsquash.oxipng.optimise }));
+// Re-registers the standard codec mocks after a test overrode them with vi.doMock.
+function restoreCodecMocks() {
+  vi.doMock('@jsquash/jpeg/encode.js', () => ({ default: jsquash.jpeg.encode, init: jsquash.jpeg.init }));
+  vi.doMock('@jsquash/oxipng/codec/pkg/squoosh_oxipng.js', () => ({ default: jsquash.oxipng.init, optimise: jsquash.oxipng.optimise }));
+  vi.resetModules();
+}
 let canvases: FakeCanvas[];
 let bitmaps: { width: number; height: number; closed: boolean; close(): void }[];
 let nativeMime: string;
@@ -32,11 +43,13 @@ class FakeCanvas {
   }
 }
 const request: ConvertRequest = { type: 'convert', id: 'one', attempt: 0,
-  file: new File(['image'], 'image.jpg'), kind: 'jpeg', format: 'png', maxArea: 16, downscale: false };
+  file: new File(['image'], 'image.jpg'), kind: 'jpeg', format: 'png', maxArea: 16, downscale: false, smaller: false };
 beforeEach(() => {
   canvases = []; bitmaps = []; nativeMime = 'image/webp'; encodeFailure = false; contextFails = false;
   jsquash.avif.init.mockClear(); jsquash.avif.encode.mockClear();
   jsquash.jxl.init.mockClear(); jsquash.jxl.encode.mockClear();
+  jsquash.jpeg.init.mockClear(); jsquash.jpeg.encode.mockClear();
+  jsquash.oxipng.init.mockClear(); jsquash.oxipng.optimise.mockClear();
   vi.stubGlobal('OffscreenCanvas', FakeCanvas);
   vi.stubGlobal('createImageBitmap', async (_: Blob, options: ImageBitmapOptions) => {
     const bitmap = { width: options.resizeWidth ?? 8, height: options.resizeHeight ?? 8,
@@ -179,6 +192,149 @@ it('reports the probed browser limit, not the 20 MP cap, for a canvas failure on
   contextFails = true;
   await expect(convert({ ...request, format: 'jxl', maxArea: 30_000_000 }, () => {}))
     .rejects.toEqual({ code: 'too-large', pixels: 64, limit: 30_000_000 });
+});
+it('encodes jpeg via MozJPEG when smaller is on, keeping the white fill', async () => {
+  const phases: string[] = [];
+  const blob = await encode({ width: 1, height: 1 } as ImageBitmap, 'jpeg', p => phases.push(p), true);
+  expect(blob.type).toBe('image/jpeg');
+  expect(await blob.text()).toBe('MozJPEG bytes');
+  expect(jsquash.jpeg.encode).toHaveBeenCalledTimes(1);
+  expect(jsquash.jpeg.encode).toHaveBeenCalledWith(
+    { data: new Uint8ClampedArray([200, 100, 50, 128]), width: 1, height: 1 },
+    { quality: 85, progressive: true });
+  expect(jsquash.jpeg.init).not.toHaveBeenCalled();
+  expect(jsquash.oxipng.optimise).not.toHaveBeenCalled();
+  expect(canvases).toHaveLength(1);
+  expect(canvases[0].fillRectCalls).toBe(1);
+  expect(phases).toEqual(['loading-codec', 'converting']);
+});
+it('falls back to the native JPEG when MozJPEG throws, then re-inits once on the next encode', async () => {
+  vi.resetModules();
+  const { encode: freshEncode } = await import('./pipeline');
+  jsquash.jpeg.encode.mockRejectedValueOnce(new Error('aborted'));
+  const phases: string[] = [];
+  const blob = await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jpeg', p => phases.push(p), true);
+  expect(blob.type).toBe('image/jpeg');
+  expect(await blob.text()).toBe('native');
+  expect(phases).toEqual(['loading-codec', 'converting']);
+  expect(jsquash.jpeg.init).not.toHaveBeenCalled();
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jpeg', () => {}, true);
+  expect(jsquash.jpeg.init).toHaveBeenCalledTimes(1);
+  expect(jsquash.jpeg.init.mock.invocationCallOrder[0])
+    .toBeLessThan(jsquash.jpeg.encode.mock.invocationCallOrder[1]);
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jpeg', () => {}, true);
+  expect(jsquash.jpeg.init).toHaveBeenCalledTimes(1);
+});
+it('passes the native PNG bytes through single-threaded OxiPNG when smaller is on', async () => {
+  const phases: string[] = [];
+  const blob = await encode({ width: 1, height: 1 } as ImageBitmap, 'png', p => phases.push(p), true);
+  expect(blob.type).toBe('image/png');
+  expect(await blob.text()).toBe('OxiPNG bytes');
+  expect(jsquash.oxipng.init).toHaveBeenCalledTimes(1);
+  expect(jsquash.oxipng.optimise).toHaveBeenCalledTimes(1);
+  const [data, level, interlace, alpha] = jsquash.oxipng.optimise.mock.calls[0];
+  expect(new TextDecoder().decode(data)).toBe('native');
+  expect([level, interlace, alpha]).toEqual([2, false, false]);
+  expect(jsquash.jpeg.encode).not.toHaveBeenCalled();
+  expect(canvases[0].fillRectCalls).toBe(0);
+  expect(phases).toEqual(['loading-codec', 'converting']);
+});
+it('returns the native PNG when OxiPNG throws, after attempting optimise', async () => {
+  jsquash.oxipng.optimise.mockImplementationOnce(() => { throw new Error('aborted'); });
+  const blob = await encode({ width: 1, height: 1 } as ImageBitmap, 'png', () => {}, true);
+  expect(jsquash.oxipng.optimise).toHaveBeenCalledTimes(1);
+  const [data, level] = jsquash.oxipng.optimise.mock.calls[0];
+  expect(new TextDecoder().decode(data)).toBe('native');
+  expect(level).toBe(2);
+  expect(blob.type).toBe('image/png');
+  expect(await blob.text()).toBe('native');
+});
+it('returns the native JPEG when the MozJPEG chunk fails to load', async () => {
+  vi.resetModules();
+  vi.doMock('@jsquash/jpeg/encode.js', () => { throw new Error('chunk fetch failed'); });
+  try {
+    const { encode: freshEncode } = await import('./pipeline');
+    const phases: string[] = [];
+    const blob = await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jpeg', p => phases.push(p), true);
+    expect(blob.type).toBe('image/jpeg');
+    expect(await blob.text()).toBe('native');
+    expect(jsquash.jpeg.encode).not.toHaveBeenCalled();
+    expect(phases).toEqual(['loading-codec']);
+  } finally {
+    restoreCodecMocks();
+  }
+});
+it('returns the native JPEG when MozJPEG init throws on a retry', async () => {
+  vi.resetModules();
+  const { encode: freshEncode } = await import('./pipeline');
+  jsquash.jpeg.encode.mockRejectedValueOnce(new Error('aborted'));
+  const first = await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jpeg', () => {}, true);
+  expect(await first.text()).toBe('native');
+  jsquash.jpeg.init.mockRejectedValueOnce(new Error('init failed'));
+  const second = await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jpeg', () => {}, true);
+  expect(jsquash.jpeg.init).toHaveBeenCalledTimes(1);
+  expect(await second.text()).toBe('native');
+});
+it('returns the native PNG when the OxiPNG chunk fails to load', async () => {
+  vi.resetModules();
+  vi.doMock('@jsquash/oxipng/codec/pkg/squoosh_oxipng.js', () => { throw new Error('chunk fetch failed'); });
+  try {
+    const { encode: freshEncode } = await import('./pipeline');
+    const blob = await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'png', () => {}, true);
+    expect(blob.type).toBe('image/png');
+    expect(await blob.text()).toBe('native');
+    expect(jsquash.oxipng.optimise).not.toHaveBeenCalled();
+  } finally {
+    restoreCodecMocks();
+  }
+});
+it.each(['jpeg', 'png'] as const)('loads neither codec module for %s when smaller is off', async format => {
+  vi.resetModules();
+  const loads = { jpeg: 0, oxipng: 0 };
+  vi.doMock('@jsquash/jpeg/encode.js', () => {
+    loads.jpeg++;
+    return { default: jsquash.jpeg.encode, init: jsquash.jpeg.init };
+  });
+  vi.doMock('@jsquash/oxipng/codec/pkg/squoosh_oxipng.js', () => {
+    loads.oxipng++;
+    return { default: jsquash.oxipng.init, optimise: jsquash.oxipng.optimise };
+  });
+  try {
+    const { encode: freshEncode } = await import('./pipeline');
+    const blob = await freshEncode({ width: 1, height: 1 } as ImageBitmap, format, () => {});
+    expect(blob.type).toBe(`image/${format}`);
+    expect(await blob.text()).toBe('native');
+    expect(loads.jpeg).toBe(0);
+    expect(loads.oxipng).toBe(0);
+  } finally {
+    restoreCodecMocks();
+  }
+});
+it.each(['webp', 'avif', 'tiff'] as const)('loads neither codec module for %s even when smaller is on', async format => {
+  vi.resetModules();
+  const loads = { jpeg: 0, oxipng: 0 };
+  vi.doMock('@jsquash/jpeg/encode.js', () => {
+    loads.jpeg++;
+    return { default: jsquash.jpeg.encode, init: jsquash.jpeg.init };
+  });
+  vi.doMock('@jsquash/oxipng/codec/pkg/squoosh_oxipng.js', () => {
+    loads.oxipng++;
+    return { default: jsquash.oxipng.init, optimise: jsquash.oxipng.optimise };
+  });
+  try {
+    const { encode: freshEncode } = await import('./pipeline');
+    await freshEncode({ width: 1, height: 1 } as ImageBitmap, format, () => {}, true);
+    expect(loads.jpeg).toBe(0);
+    expect(loads.oxipng).toBe(0);
+  } finally {
+    restoreCodecMocks();
+  }
+});
+it('forwards smaller from the convert request to the encoder', async () => {
+  const result = await convert({ ...request, format: 'jpeg', maxArea: null, smaller: true }, () => {});
+  expect(result.blob.type).toBe('image/jpeg');
+  expect(await result.blob.text()).toBe('MozJPEG bytes');
+  expect(jsquash.jpeg.encode).toHaveBeenCalledTimes(1);
 });
 it('encodes actual TIFF bytes with straight alpha and no source metadata', async () => {
   const blob = await encode({ width: 1, height: 1 } as ImageBitmap, 'tiff', () => {});

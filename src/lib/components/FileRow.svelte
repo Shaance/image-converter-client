@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
   import type { Job } from '../queue.svelte';
-  import { OUTPUT_FORMATS, type OutputFormat } from '../formats';
+  import { JXL_MAX_PIXELS, OUTPUT_FORMATS, type OutputFormat } from '../formats';
   import { formatBytes, outputName } from '../names';
   import Icons from './Icons.svelte';
   let { job, format, onremove, ondownscale }: {
@@ -16,7 +16,9 @@
       case 'worker-lost': return 'The converter stopped. Reload the page to continue.';
       case 'failed': return "Couldn't convert this file";
       case 'too-large': return job.error.pixels && job.error.limit
-        ? `Too large for this browser (${Math.round(job.error.pixels / 1e6)} MP, limit ${Math.round(job.error.limit / 1e6)} MP)`
+        ? format === 'jxl' && job.error.limit === JXL_MAX_PIXELS
+          ? `Too large for JPEG XL (${Math.round(job.error.pixels / 1e6)} MP, limit ${Math.round(job.error.limit / 1e6)} MP)`
+          : `Too large for this browser (${Math.round(job.error.pixels / 1e6)} MP, limit ${Math.round(job.error.limit / 1e6)} MP)`
         : 'Too large for this browser';
       default: return '';
     }

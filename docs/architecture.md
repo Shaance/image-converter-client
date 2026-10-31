@@ -29,6 +29,15 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
   PNG, WebP, AVIF, JPEG XL and TIFF keep alpha. JPEG quality 0.9, WebP quality 0.85,
   AVIF quality 50 / speed 6, JPEG XL quality 75 / effort 5. PDF: one
   page per file, page size = pixels / 300 per inch.
+- "Smaller files" is an opt-in checkbox under the format chips (in both the empty
+  and busy states), shown only when the selected output is JPEG or PNG. When on,
+  JPEG is encoded with MozJPEG (quality 85, progressive) and PNG is the native PNG
+  passed through OxiPNG (level 2, lossless); if the codec chunk, its init or the
+  encode fails, the native encoder's result is used instead of failing the file.
+  Off by default, not
+  persisted across reloads. Changing it while JPEG or PNG is selected re-converts
+  the batch exactly like a format change; on any other format it only records the
+  value for when JPEG or PNG is picked.
 - Supported browsers: `OffscreenCanvas`, `createImageBitmap`, module workers.
   API floors: Safari 16.4, Chrome 80, Firefox 114; product floor Safari 17 / iOS 17.
   Detection is synchronous feature checks plus the worker's `error` event. An
@@ -47,8 +56,9 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
   fails the row fails. If the probe itself fails, no limit is invented, oversize
   rows just fail with "Too large for this browser" and no downscale action.
   JPEG XL output also caps at 20 MP, because the single-threaded encoder's wasm
-  heap is fixed at 2 GB and larger encodes abort; oversize rows get the same
-  downscale action ("Convert at 20 MP").
+  heap is fixed at 2 GB and larger encodes abort; oversize rows read "Too large
+  for JPEG XL (24 MP, limit 20 MP)" and get the same downscale action
+  ("Convert at 20 MP").
 - No file-count cap. The header shows the running totals. Known limit, not
   mitigated in this build: very large batches on a phone can exhaust memory
   (results are kept as Blobs, the zip is a second copy). Copy never promises "any
@@ -88,6 +98,9 @@ error?: { code, pixels?, limit? } }`
 
 Statuses: `queued`, `converting`, `done`, `failed`, `awaiting-downscale`.
 
+Queue-level settings: `format` (default `'jpeg'`) and `smaller` (default `false`,
+the "Smaller files" toggle; not persisted).
+
 Error codes: `unrecognized` (sniff failed or zero bytes: "Not an image we can
 read"), `too-large` (with pixels and limit; limit absent when the probe failed),
 `failed` (decode, encode or codec load failed: "Couldn't convert this file"),
@@ -105,6 +118,9 @@ Transitions:
   A format change resets consent (fresh attempt, may ask again).
 - setFormat(f) → every non-removed job gets a new `attempt` number and returns to
   queued; results, thumbnails stay, result URLs are revoked.
+- setSmaller(on) → records the value; when the selected format is `jpeg` or `png`
+  it restarts every job exactly like setFormat (new attempt, results dropped, zip
+  invalidated, consent cleared), on any other format jobs are untouched.
 - remove(id) / clear() from any status; an in-flight job is dropped from state and
   its worker result is ignored on arrival (matched by `id` + `attempt`).
 - Worker `error` event → every queued/converting job → failed `worker-lost`;
@@ -132,7 +148,7 @@ src/
     formats.ts            OUTPUT_FORMATS table (id, label, mime, extension), sniff(bytes) → InputKind | null
     names.ts              outputName(inputName, format), uniqueNames(names) for the zip, formatBytes
     capabilities.ts       supported(): boolean; probeMaxArea(): Promise<number | null> (canvas-size, main thread)
-    pipeline.ts           worker-side processing: decode(file, kind, fitTo?) → ImageBitmap, encode(bitmap, format) → Blob, thumbnail(bitmap) → Blob
+    pipeline.ts           worker-side processing: decode(file, kind, fitTo?) → ImageBitmap, encode(bitmap, format, smaller?) → Blob, thumbnail(bitmap) → Blob
     pipeline.worker.ts    module worker: message loop around pipeline.ts, lazy codec imports
     queue.svelte.ts       the state above; owns the Worker instance and the zip
     zip.ts                buildZip(rows) → Blob via client-zip
@@ -145,24 +161,29 @@ Rules:
 - `pipeline.ts` has no Svelte and no DOM beyond `OffscreenCanvas`; it is the only
   module that touches codecs. Lazy `import()`: `@jsquash/webp` (only when the
   native probe returns a blob whose `type !== 'image/webp'`), `@jsquash/avif` and
-  `@jsquash/jxl` (only for that output), `heic-to/csp` with
+  `@jsquash/jxl` (only for that output), `@jsquash/jpeg` and
+  `@jsquash/oxipng/codec/pkg/squoosh_oxipng.js` (only when `smaller` is on and the
+  output is JPEG or PNG; the single-threaded wasm-bindgen entry, so the parallel
+  wasm and its worker are never bundled), `heic-to/csp` with
   `type: 'bitmap'` (only for HEIC; note it spawns its own nested worker), `gifenc`,
   `utif`, `pdf-lib` (only for that output).
 - Memory: `ImageBitmap.close()` in `finally`; canvases set to 0×0 after use;
   intermediate RGBA arrays are not retained; only thumbnails (≤ 88 px, JPEG) and
   result Blobs live past a job. Revoking a URL always accompanies dropping the Blob
-  reference. AVIF and JPEG XL re-initialise the codec (`init()`) only after a
-  failed encode, so one aborted encode cannot leave the cached module broken for
-  later files, while healthy batches reuse one compiled module.
+  reference. AVIF, JPEG XL and MozJPEG re-initialise the codec (`init()`) only after
+  a failed encode, so one aborted encode cannot leave the cached module broken for
+  later files, while healthy batches reuse one compiled module. OxiPNG instead
+  falls back to the native PNG blob on any failure (chunk fetch, init, optimise),
+  because wasm-bindgen's `init()` caches the instance and re-init would be a no-op.
 - Worker protocol (no RPC library):
-  in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale }`
+  in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale, smaller }`
   out `{ type: 'phase', id, attempt, phase: 'loading-codec' | 'converting' }`,
   `{ type: 'done', id, attempt, blob, thumbnail, width, height, downscaled }`,
   `{ type: 'error', id, attempt, code, pixels?, limit? }`.
   The queue dispatches the next job only after the previous one settles.
 - Vite: `new Worker(new URL('./pipeline.worker.ts', import.meta.url), { type: 'module' })`,
   `worker: { format: 'es' }`,
-  `optimizeDeps: { exclude: ['@jsquash/webp', '@jsquash/avif', '@jsquash/jxl'] }`.
+  `optimizeDeps: { exclude: ['@jsquash/webp', '@jsquash/avif', '@jsquash/jxl', '@jsquash/jpeg', '@jsquash/oxipng'] }`.
   The production build must be checked for the lazy codec chunks and the wasm
   assets actually being fetched.
 - No user-agent sniffing anywhere.
@@ -226,6 +247,8 @@ is reserved for disabled states.
 | Encode WebP | native when `blob.type === 'image/webp'`, else @jsquash/webp 1.5.0 |
 | Encode AVIF | @jsquash/avif 2.1.1 (single-threaded build; the site is not cross-origin isolated) |
 | Encode JPEG XL | @jsquash/jxl 1.3.0 (same) |
+| Encode JPEG smaller, opt-in | @jsquash/jpeg 1.6.0 (MozJPEG, same) |
+| Optimise PNG losslessly, opt-in | @jsquash/oxipng 2.3.0 (same) |
 | Encode GIF | gifenc 1.0.3 (`quantize` rgb565, `applyPalette`, one frame) |
 | Encode TIFF | utif 3.1.0 `encodeImage(rgba, w, h)` |
 | Encode PDF | pdf-lib 1.17.1 (`embedJpg`, one page) |
@@ -239,6 +262,8 @@ is reserved for disabled states.
   format-switch race and ignored stale results).
 - Built site (`vite preview`), Chromium and Safari, plus iOS Simulator Safari:
   each of the eight outputs from a JPEG, HEIC → JPEG, PNG with alpha → JPEG/PNG,
+  the "Smaller files" toggle off and on for JPEG and PNG (MozJPEG/OxiPNG chunks
+  fetched, native fallback intact),
   EXIF orientation 6 JPEG, a 48 MP image, a 24 MP JPEG → JPEG XL offers
   "Convert at 20 MP", then converts, and a later 12 MP file still converts,
   a .mov dropped in, remove in flight,

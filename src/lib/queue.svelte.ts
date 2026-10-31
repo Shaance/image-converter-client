@@ -17,6 +17,7 @@ export type ZipState = { status: 'idle' | 'preparing' | 'ready'; url?: string };
 export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: number | null }) {
   let jobs = $state<Job[]>([]);
   let format = $state<OutputFormat>('jpeg');
+  let smaller = $state(false);
   let zip = $state<ZipState>({ status: 'idle' });
   let workerStatus = $state<{ status: 'starting' | 'ready' | 'unavailable' }>({ status: 'starting' });
   const fileCount = $derived(jobs.length);
@@ -67,7 +68,7 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     job.status = 'converting'; job.phase = undefined;
     inFlight = { id: job.id, attempt: job.attempt };
     const message: ConvertRequest = { type: 'convert', ...inFlight, file: job.file,
-      kind: job.kind as InputKind, format, maxArea, downscale: consent.has(job.id) };
+      kind: job.kind as InputKind, format, maxArea, downscale: consent.has(job.id), smaller };
     try { worker.postMessage(message); }
     catch { workerLost(); }
   }
@@ -149,10 +150,9 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     jobs = [];
     consent.clear();
   }
-  function setFormat(id: OutputFormat) {
-    if (id === format) return;
+  // A fresh attempt for every job: results dropped, zip invalidated, consent cleared.
+  function restartJobs() {
     invalidateZip();
-    format = id;
     consent.clear();
     for (const job of jobs) {
       dropResult(job);
@@ -165,6 +165,17 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
       }
     }
     advance();
+  }
+  function setFormat(id: OutputFormat) {
+    if (id === format) return;
+    format = id;
+    restartJobs();
+  }
+  function setSmaller(on: boolean) {
+    if (on === smaller) return;
+    smaller = on;
+    // Only the formats the toggle affects re-convert the batch; otherwise just record it.
+    if (format === 'jpeg' || format === 'png') restartJobs();
   }
   function convertDownscaled(id: string) {
     const job = jobs.find(job => job.id === id);
@@ -184,10 +195,11 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     worker.terminate();
   }
   return {
-    get jobs() { return jobs; }, get format() { return format; }, get zip() { return zip; },
+    get jobs() { return jobs; }, get format() { return format; }, get smaller() { return smaller; },
+    get zip() { return zip; },
     get workerStatus() { return workerStatus; }, get fileCount() { return fileCount; },
     get bytesIn() { return bytesIn; }, get bytesOut() { return bytesOut; },
     get doneCount() { return doneCount; }, get failedCount() { return failedCount; },
-    get settled() { return settled; }, add, remove, clear, setFormat, convertDownscaled, dispose,
+    get settled() { return settled; }, add, remove, clear, setFormat, setSmaller, convertDownscaled, dispose,
   };
 }
