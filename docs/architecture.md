@@ -83,8 +83,8 @@ a per-session choice and is always off on page load.
   size, any number".
 - Files never leave the device in the default "On device" mode. Codec chunks and
   Google Fonts still load from the network; no file bytes are ever sent anywhere.
-  In "Server" mode each eligible file is uploaded once to the configured imagor
-  server (see "Server mode" under Rules), converted there and deleted by the
+  In "Server" mode eligible files are uploaded one at a time, with retries
+  while the server is busy, to the configured imagor server (see "Server mode" under Rules), converted there and deleted by the
   server immediately after responding; RAW/BMP inputs and PDF output always
   convert on the device.
 
