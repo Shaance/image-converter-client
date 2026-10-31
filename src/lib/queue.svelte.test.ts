@@ -172,6 +172,42 @@ describe('queue state and worker boundary', () => {
     expect(queue.zip.status).toBe('idle');
     expect(urls.size).toBe(0);
   });
+  it('sends smaller in every convert request and restarts every job when it changes on jpeg', async () => {
+    await queue.add([file(), file('second.jpg')]); await turn();
+    const old = worker.requests[0];
+    expect(worker.requests.at(-1)).toMatchObject({ smaller: false });
+    worker.done(old); await turn();
+    expect(queue.jobs.map(job => job.status)).toEqual(['done', 'converting']);
+    queue.setSmaller(true);
+    expect(queue.smaller).toBe(true);
+    expect(queue.jobs.map(job => [job.status, job.attempt, job.result]))
+      .toEqual([['queued', 1, undefined], ['queued', 1, undefined]]);
+    await turn();
+    expect(queue.jobs.every(job => job.status === 'queued')).toBe(true);
+    worker.done(); await turn();
+    expect(worker.requests.at(-1)).toMatchObject({ smaller: true, attempt: 1, format: 'jpeg' });
+    worker.done(); await turn();
+    expect(queue.jobs[0].status).toBe('done');
+    queue.setSmaller(false);
+    expect(queue.smaller).toBe(false);
+    expect(queue.jobs.map(job => [job.status, job.attempt])).toEqual([['queued', 2], ['queued', 2]]);
+    await turn();
+    worker.done(); await turn();
+    expect(worker.requests.at(-1)).toMatchObject({ smaller: false, attempt: 2 });
+  });
+  it('only records smaller when another format is selected, and sends it once that format is picked', async () => {
+    await queue.add([file()]); await turn();
+    worker.done(); await turn();
+    queue.setFormat('webp'); await turn();
+    const attempt = queue.jobs[0].attempt;
+    worker.done(); await turn();
+    queue.setSmaller(true);
+    expect(queue.jobs[0].attempt).toBe(attempt);
+    expect(queue.jobs[0].status).toBe('done');
+    expect(worker.requests).toHaveLength(2);
+    queue.setFormat('png'); await turn();
+    expect(worker.requests.at(-1)).toMatchObject({ format: 'png', smaller: true, attempt: attempt + 1 });
+  });
   it('discards a pending zip after clear and releases the owned worker on dispose', async () => {
     await queue.add([file()]); await turn();
     worker.done();

@@ -9,6 +9,7 @@ Everything happens in your browser, so your files never leave your device.
 
 - Drop in HEIC, JPEG, PNG, WebP, GIF, BMP or AVIF files and they convert immediately, no button to press.
 - Pick JPEG, PNG, WebP, AVIF, JPEG XL, PDF, GIF or TIFF as the output. Changing the format re-converts the whole batch.
+- For JPEG and PNG output, an optional "Smaller files" toggle encodes with MozJPEG and runs PNGs through OxiPNG for smaller files, at the cost of slower conversions.
 - Download each file on its own, or grab everything as one zip.
 - Converted files carry no EXIF or location data.
 - Works on phones, including HEIC photos straight from an iPhone camera roll.
@@ -27,6 +28,8 @@ are loaded on demand so the initial page stays small:
 | WebP encoding where the browser cannot | [@jsquash/webp](https://github.com/jamsinclair/jSquash) |
 | AVIF encoding | [@jsquash/avif](https://github.com/jamsinclair/jSquash) 2.1.1 |
 | JPEG XL encoding | [@jsquash/jxl](https://github.com/jamsinclair/jSquash) 1.3.0 |
+| Smaller JPEG output (opt-in toggle) | [@jsquash/jpeg](https://github.com/jamsinclair/jSquash) |
+| Lossless PNG optimisation (opt-in toggle) | [@jsquash/oxipng](https://github.com/jamsinclair/jSquash) |
 | GIF encoding | [gifenc](https://github.com/mattdesl/gifenc) |
 | TIFF encoding | [UTIF](https://github.com/photopea/UTIF.js) |
 | PDF output | [pdf-lib](https://pdf-lib.js.org) |

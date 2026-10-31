@@ -46,7 +46,7 @@
         {:else if queue.failedCount}{queue.doneCount} ready · {queue.failedCount} need attention
         {:else}{formatBytes(queue.bytesIn)} → {formatBytes(queue.bytesOut)} · all done{/if}</span>
     </div>
-    <div class="formats"><span class="label">To</span><FormatChips value={queue.format} onchange={queue.setFormat} compact /></div>
+    <div class="formats"><span class="label">To</span><FormatChips value={queue.format} onchange={queue.setFormat} smaller={queue.smaller} onsmaller={queue.setSmaller} compact /></div>
     <button class="clear" onclick={onclear}>Clear all</button>
   </div>
   <ul bind:this={list}>
@@ -64,7 +64,7 @@
   .summary { display: flex; align-items: baseline; gap: 14px; flex: 1; }
   h2 { font: 400 30px var(--serif); margin: 0; white-space: nowrap; }
   .summary span { font-size: 13px; color: var(--muted); }
-  .formats { display: flex; align-items: center; gap: 16px; }
+  .formats { display: flex; align-items: baseline; gap: 16px; }
   .clear { font-size: 13px; color: var(--muted); padding: 0; margin-left: 8px; white-space: nowrap; }
   ul { list-style: none; padding: 0; margin: 0; }
   li:global(.insert) { animation: row-opacity var(--standard) var(--ease-out) var(--row-delay) backwards; }

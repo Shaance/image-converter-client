@@ -1,4 +1,4 @@
-import { OUTPUT_FORMATS, type InputKind, type OutputFormat } from './formats';
+import { JXL_MAX_PIXELS, OUTPUT_FORMATS, type InputKind, type OutputFormat } from './formats';
 
 export type ConversionError = {
   code: 'unrecognized' | 'too-large' | 'failed' | 'worker-lost';
@@ -7,7 +7,7 @@ export type ConversionError = {
 };
 export type ConvertRequest = {
   type: 'convert'; id: string; attempt: number; file: File; kind: InputKind;
-  format: OutputFormat; maxArea: number | null; downscale: boolean;
+  format: OutputFormat; maxArea: number | null; downscale: boolean; smaller: boolean;
 };
 export type WorkerResponse =
   | { type: 'phase'; id: string; attempt: number; phase: 'loading-codec' | 'converting' }
@@ -20,10 +20,9 @@ type Phase = (phase: 'loading-codec' | 'converting') => void;
 
 const AVIF_ENCODE_OPTIONS = { quality: 50, speed: 6 };
 const JXL_ENCODE_OPTIONS = { quality: 75, effort: 5 };
-// The single-threaded JXL wasm heap is fixed at 2 GB; larger encodes abort.
-const JXL_MAX_PIXELS = 20_000_000;
+const MOZJPEG_ENCODE_OPTIONS = { quality: 85, progressive: true };
 // Set when a codec's last encode threw; its cached jSquash module may be broken.
-const codecFailed: Record<'avif' | 'jxl', boolean> = { avif: false, jxl: false };
+const codecFailed: Record<'avif' | 'jxl' | 'jpeg', boolean> = { avif: false, jxl: false, jpeg: false };
 
 // The caller owns the returned bitmap and closes it in finally.
 export async function decode(file: File, kind: InputKind, fitTo?: Fit): Promise<ImageBitmap> {
@@ -37,7 +36,7 @@ export async function decode(file: File, kind: InputKind, fitTo?: Fit): Promise<
   return createImageBitmap(file, options);
 }
 
-export async function encode(bitmap: ImageBitmap, format: OutputFormat, phase: Phase): Promise<Blob> {
+export async function encode(bitmap: ImageBitmap, format: OutputFormat, phase: Phase, smaller = false): Promise<Blob> {
   const { width, height } = bitmap;
   const canvas = new OffscreenCanvas(width, height);
   try {
@@ -49,6 +48,42 @@ export async function encode(bitmap: ImageBitmap, format: OutputFormat, phase: P
     }
     context.drawImage(bitmap, 0, 0);
     const mime = OUTPUT_FORMATS.find(f => f.id === format)!.mime;
+    if (format === 'jpeg' && smaller) {
+      phase('loading-codec');
+      try {
+        const codec = await import('@jsquash/jpeg/encode.js');
+        // Re-init only after a failed encode: one abort must not break the cached
+        // module, but healthy batches reuse the single compiled instance.
+        if (codecFailed.jpeg) {
+          await codec.init();
+          codecFailed.jpeg = false;
+        }
+        phase('converting');
+        return new Blob([await codec.default(context.getImageData(0, 0, width, height), MOZJPEG_ENCODE_OPTIONS)], { type: mime });
+      } catch (error) {
+        codecFailed.jpeg = true;
+        // Chunk fetch, init and encode failures all fall back to the native JPEG.
+        return await canvas.convertToBlob({ type: mime, quality: 0.9 });
+      }
+    }
+    if (format === 'png' && smaller) {
+      const native = await canvas.convertToBlob({ type: mime, quality: 0.9 });
+      phase('loading-codec');
+      try {
+        // Single-threaded wasm-bindgen entry, so the parallel wasm and its worker
+        // are never bundled; the site is not cross-origin isolated.
+        const { default: init, optimise } = await import('@jsquash/oxipng/codec/pkg/squoosh_oxipng.js');
+        await init();
+        phase('converting');
+        // level 2, interlace false, optimize_alpha false (the library defaults).
+        const optimised = optimise(new Uint8Array(await native.arrayBuffer()), 2, false, false);
+        return new Blob([optimised as Uint8Array<ArrayBuffer>], { type: mime });
+      } catch {
+        // wasm-bindgen init caches its instance, so re-init is not a recovery;
+        // the native PNG is.
+        return native;
+      }
+    }
     if (format === 'jpeg' || format === 'png') {
       return await canvas.convertToBlob({ type: mime, quality: 0.9 });
     }
@@ -158,7 +193,7 @@ export async function convert(request: ConvertRequest, phase: Phase) {
         throw { code: 'too-large', pixels, limit: maxArea };
       }
     }
-    const blob = await encode(bitmap, request.format, phase);
+    const blob = await encode(bitmap, request.format, phase, request.smaller);
     const preview = await thumbnail(bitmap);
     return { blob, thumbnail: preview, width: bitmap.width, height: bitmap.height, downscaled };
   } catch (error) {

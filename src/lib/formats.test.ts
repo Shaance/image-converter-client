@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OUTPUT_FORMATS, sniff } from './formats';
+import { JXL_MAX_PIXELS, OUTPUT_FORMATS, sniff } from './formats';
 import { outputName, uniqueNames, formatBytes } from './names';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
@@ -41,6 +41,9 @@ describe('magic bytes', () => {
   it('keeps the eight output interfaces in the frozen order', () => {
     expect(OUTPUT_FORMATS.map(f => f.id)).toEqual(['jpeg', 'png', 'webp', 'avif', 'jxl', 'pdf', 'gif', 'tiff']);
     expect(OUTPUT_FORMATS[0]).toEqual({ id: 'jpeg', label: 'JPEG', mime: 'image/jpeg', extension: 'jpg' });
+  });
+  it('exports the 20 MP JPEG XL pixel cap', () => {
+    expect(JXL_MAX_PIXELS).toBe(20_000_000);
   });
 });
 

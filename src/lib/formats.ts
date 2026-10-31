@@ -11,6 +11,9 @@ export const OUTPUT_FORMATS = [
 export type OutputFormat = typeof OUTPUT_FORMATS[number]['id'];
 export type InputKind = 'heic' | 'jpeg' | 'png' | 'webp' | 'gif' | 'bmp' | 'avif';
 
+// The single-threaded JXL wasm heap is fixed at 2 GB; larger encodes abort.
+export const JXL_MAX_PIXELS = 20_000_000;
+
 export function sniff(header: Uint8Array): InputKind | null {
   const starts = (...bytes: number[]) => bytes.every((b, i) => header[i] === b);
   const text = (start: number, end: number) =>

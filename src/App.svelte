@@ -53,7 +53,8 @@
   </div>
   {#if !queue?.fileCount}
     <div class="empty-formats"><span class="label">Convert to</span>
-      <FormatChips value={queue?.format ?? 'jpeg'} onchange={format => queue?.setFormat(format)} disabled={!queue} />
+      <FormatChips value={queue?.format ?? 'jpeg'} onchange={format => queue?.setFormat(format)}
+        smaller={queue?.smaller ?? false} onsmaller={on => queue?.setSmaller(on)} disabled={!queue} />
     </div>
   {/if}
   {#if queue?.fileCount}
@@ -76,7 +77,7 @@
   h1 { font: 400 56px/1.08 var(--serif); margin: 0 0 20px; letter-spacing: -.01em; text-wrap: pretty; }
   em { color: var(--teal); }
   .hero p { font-size: 18px; line-height: 1.55; color: var(--muted); margin: 0; max-width: 560px; }
-  .empty-formats { display: flex; align-items: center; padding-top: 28px; gap: 16px; }
+  .empty-formats { display: flex; align-items: baseline; padding-top: 28px; gap: 16px; }
   footer { display: flex; justify-content: space-between; gap: 20px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 20px; margin-top: 0; }
   .spacer { flex-grow: 1; min-height: 64px; }
   footer p { margin: 0; }
