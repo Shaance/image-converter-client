@@ -177,8 +177,8 @@ it('reports no invented limit for a canvas failure on JPEG XL when the probe fai
 });
 it('reports the probed browser limit, not the 20 MP cap, for a canvas failure on JPEG XL', async () => {
   contextFails = true;
-  await expect(convert({ ...request, format: 'jxl', maxArea: 1000 }, () => {}))
-    .rejects.toEqual({ code: 'too-large', pixels: 64, limit: 1000 });
+  await expect(convert({ ...request, format: 'jxl', maxArea: 30_000_000 }, () => {}))
+    .rejects.toEqual({ code: 'too-large', pixels: 64, limit: 30_000_000 });
 });
 it('encodes actual TIFF bytes with straight alpha and no source metadata', async () => {
   const blob = await encode({ width: 1, height: 1 } as ImageBitmap, 'tiff', () => {});
