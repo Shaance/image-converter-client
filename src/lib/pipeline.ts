@@ -256,9 +256,11 @@ async function serverPreview(blob: Blob, request: ConvertRequest): Promise<{
 
 export async function convert(request: ConvertRequest, phase: Phase, signal?: AbortSignal) {
   // Server mode: eligible files are uploaded first; anything the server cannot
-  // do falls through to the on-device path below. A cancelled job (invalidated
-  // while in flight) throws instead: it must not fall back to on-device work.
-  if (request.server && serverEligible(request.kind, request.format)) {
+  // do falls through to the on-device path below. An explicit downscale attempt
+  // never goes to the server: the server does not resize, so the re-sent file
+  // would come back full size. A cancelled job (invalidated while in flight)
+  // throws instead: it must not fall back to on-device work.
+  if (request.server && !request.downscale && serverEligible(request.kind, request.format)) {
     let outcome: ServerOutcome;
     try {
       outcome = await convertOnServer({

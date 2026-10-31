@@ -248,14 +248,18 @@ Rules:
   trailing slashes stripped. A job is eligible when the request carries a server
   AND the sniffed kind is jpeg/png/webp/gif/avif/heic AND the output is
   jpeg/png/webp/avif/jxl/gif/tiff; RAW/BMP inputs and PDF output always convert on
-  the device. Eligible jobs are uploaded one at a time (the queue already dispatches
-  one job at a time) with `POST {SERVER_URL}/unsafe/filters:format(<fmt>)/` or
+  the device, and so does any explicit downscale attempt (`downscale: true`): the
+  server does not resize, so a re-sent file would come back full size. Eligible
+  jobs are uploaded one at a time, re-sent only while the server answers busy
+  (408/429/503) (the queue already dispatches one job at a time), with
+  `POST {SERVER_URL}/unsafe/filters:format(<fmt>)/` or
   `POST {SERVER_URL}/unsafe/filters:format(<fmt>):quality(<q>)/` (qualities: jpeg 90,
   webp 85, avif 50, jxl 75; png/gif/tiff send none), body multipart/form-data with a
   single `image` field whose Blob type is the sniffed kind's image/* MIME — never
   `File.type`, which iOS mislabels and the server rejects with 406. Fetch uses
   `credentials: 'omit'`, `mode: 'cors'`, `referrerPolicy: 'no-referrer'`,
-  `cache: 'no-store'` and a 60 s per-attempt timeout (`AbortSignal.timeout`); no
+  `cache: 'no-store'` and a per-attempt timeout of at most 60 s, capped to the
+  file's remaining wall-clock budget; no
   credentials or cookies are ever sent. A 200 returns the response blob retyped with
   the output MIME (a failed body read — dropped connection, timeout mid-read —
   falls back too). 408 (imagor answers 408 when a queued request has not started

@@ -582,6 +582,20 @@ describe('server mode', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // never uploads again
     expect(canvases).toEqual([]); // no on-device encode ran
   });
+  it('never uploads an explicit downscale attempt, which converts on the device within the limit', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
+    // First attempt (maxArea 16, stubbed bitmap 8x8 = 64 px): the server fails,
+    // the device path reports too-large.
+    await expect(convert({ ...request, server: SERVER_URL }, () => {}))
+      .rejects.toEqual({ code: 'too-large', pixels: 64, limit: 16 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The "Convert at 16 MP" retry (downscale: true) must not upload again.
+    const result = await convert({ ...request, server: SERVER_URL, downscale: true }, () => {});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.where).toBe('device');
+    expect(result.downscaled).toBe(true);
+    expect(result.width * result.height).toBeLessThanOrEqual(16);
+  });
 });
 
 describe('worker cancellation', () => {
