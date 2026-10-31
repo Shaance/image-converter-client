@@ -38,8 +38,8 @@ describe('magic bytes', () => {
     new DataView(header.buffer).setUint32(0, 16);
     expect(sniff(header)).toBeNull();
   });
-  it('keeps the six output interfaces in the frozen order', () => {
-    expect(OUTPUT_FORMATS.map(f => f.id)).toEqual(['jpeg', 'png', 'webp', 'pdf', 'gif', 'tiff']);
+  it('keeps the eight output interfaces in the frozen order', () => {
+    expect(OUTPUT_FORMATS.map(f => f.id)).toEqual(['jpeg', 'png', 'webp', 'avif', 'jxl', 'pdf', 'gif', 'tiff']);
     expect(OUTPUT_FORMATS[0]).toEqual({ id: 'jpeg', label: 'JPEG', mime: 'image/jpeg', extension: 'jpg' });
   });
 });
@@ -50,6 +50,11 @@ describe('download names', () => {
     ['.hidden', '.hidden.jpg'], ['a/b\\c.png', 'abc.jpg'],
     ['旅の写真 🌱.HEIC', '旅の写真 🌱.jpg'],
   ])('renames %s', (input, expected) => expect(outputName(input, 'jpeg')).toBe(expected));
+  it.each([
+    ['photo.HEIC', 'avif', 'photo.avif'],
+    ['photo.png', 'jxl', 'photo.jxl'],
+  ] as const)('renames %s to the %s extension', (input, format, expected) =>
+    expect(outputName(input, format)).toBe(expected));
   it('reserves original numbered names, even when they appear later', () => {
     expect(uniqueNames(['a.jpg', 'a.jpg', 'a (2).jpg', 'a.jpg', 'a (2).jpg']))
       .toEqual(['a.jpg', 'a (3).jpg', 'a (2).jpg', 'a (4).jpg', 'a (2) (2).jpg']);

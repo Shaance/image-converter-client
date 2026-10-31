@@ -2,6 +2,8 @@ export const OUTPUT_FORMATS = [
   { id: 'jpeg', label: 'JPEG', mime: 'image/jpeg', extension: 'jpg' },
   { id: 'png', label: 'PNG', mime: 'image/png', extension: 'png' },
   { id: 'webp', label: 'WebP', mime: 'image/webp', extension: 'webp' },
+  { id: 'avif', label: 'AVIF', mime: 'image/avif', extension: 'avif' },
+  { id: 'jxl', label: 'JPEG XL', mime: 'image/jxl', extension: 'jxl' },
   { id: 'pdf', label: 'PDF', mime: 'application/pdf', extension: 'pdf' },
   { id: 'gif', label: 'GIF', mime: 'image/gif', extension: 'gif' },
   { id: 'tiff', label: 'TIFF', mime: 'image/tiff', extension: 'tiff' },

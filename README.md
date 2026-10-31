@@ -8,7 +8,7 @@ Everything happens in your browser, so your files never leave your device.
 ## What it does
 
 - Drop in HEIC, JPEG, PNG, WebP, GIF, BMP or AVIF files and they convert immediately, no button to press.
-- Pick JPEG, PNG, WebP, PDF, GIF or TIFF as the output. Changing the format re-converts the whole batch.
+- Pick JPEG, PNG, WebP, AVIF, JPEG XL, PDF, GIF or TIFF as the output. Changing the format re-converts the whole batch.
 - Download each file on its own, or grab everything as one zip.
 - Converted files carry no EXIF or location data.
 - Works on phones, including HEIC photos straight from an iPhone camera roll.
@@ -25,6 +25,8 @@ are loaded on demand so the initial page stays small:
 | --- | --- |
 | HEIC and HEIF decoding | [heic-to](https://github.com/hoppergee/heic-to) |
 | WebP encoding where the browser cannot | [@jsquash/webp](https://github.com/jamsinclair/jSquash) |
+| AVIF encoding | [@jsquash/avif](https://github.com/jamsinclair/jSquash) 2.1.1 |
+| JPEG XL encoding | [@jsquash/jxl](https://github.com/jamsinclair/jSquash) 1.3.0 |
 | GIF encoding | [gifenc](https://github.com/mattdesl/gifenc) |
 | TIFF encoding | [UTIF](https://github.com/photopea/UTIF.js) |
 | PDF output | [pdf-lib](https://pdf-lib.js.org) |
@@ -32,7 +34,9 @@ are loaded on demand so the initial page stays small:
 
 Very large images can exceed what a browser canvas will draw. The app probes
 that limit once at startup and, when a photo is over it, offers to convert at a
-reduced size instead of failing silently.
+reduced size instead of failing silently. JPEG XL output is also capped at 20 MP
+(the encoder's wasm heap is fixed at 2 GB); oversize photos get the same
+reduced-size offer.
 
 A few things are deliberately out of scope: inputs a browser cannot decode
 (RAW, PSD, and so on), animated output, and any server-side processing.

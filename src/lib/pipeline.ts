@@ -18,6 +18,11 @@ export type WorkerResponse =
 type Fit = { width: number; height: number };
 type Phase = (phase: 'loading-codec' | 'converting') => void;
 
+const AVIF_ENCODE_OPTIONS = { quality: 50, speed: 6 };
+const JXL_ENCODE_OPTIONS = { quality: 75, effort: 5 };
+// The single-threaded JXL wasm heap is fixed at 2 GB; larger encodes abort.
+const JXL_MAX_PIXELS = 20_000_000;
+
 // The caller owns the returned bitmap and closes it in finally.
 export async function decode(file: File, kind: InputKind, fitTo?: Fit): Promise<ImageBitmap> {
   const options: ImageBitmapOptions = fitTo ? {
@@ -52,6 +57,17 @@ export async function encode(bitmap: ImageBitmap, format: OutputFormat, phase: P
       const { default: webp } = await import('@jsquash/webp/encode.js');
       phase('converting');
       return new Blob([await webp(context.getImageData(0, 0, width, height), { quality: 85 })], { type: mime });
+    }
+    if (format === 'avif' || format === 'jxl') {
+      phase('loading-codec');
+      const codec = format === 'avif'
+        ? await import('@jsquash/avif/encode.js')
+        : await import('@jsquash/jxl/encode.js');
+      // A fresh instance per file: one aborted encode must not break the cached module.
+      await codec.init();
+      phase('converting');
+      const options = format === 'avif' ? AVIF_ENCODE_OPTIONS : JXL_ENCODE_OPTIONS;
+      return new Blob([await codec.default(context.getImageData(0, 0, width, height), options)], { type: mime });
     }
     phase('loading-codec');
     if (format === 'pdf') {
@@ -103,6 +119,9 @@ export async function thumbnail(bitmap: ImageBitmap): Promise<Blob> {
 }
 
 export async function convert(request: ConvertRequest, phase: Phase) {
+  const maxArea = request.format === 'jxl'
+    ? Math.min(request.maxArea ?? JXL_MAX_PIXELS, JXL_MAX_PIXELS)
+    : request.maxArea;
   let bitmap: ImageBitmap | undefined;
   let pixels: number | undefined;
   let downscaled = false;
@@ -111,11 +130,11 @@ export async function convert(request: ConvertRequest, phase: Phase) {
     bitmap = await decode(request.file, request.kind);
     phase('converting');
     pixels = bitmap.width * bitmap.height;
-    if (request.maxArea !== null && pixels > request.maxArea) {
-      if (!request.downscale) throw { code: 'too-large', pixels, limit: request.maxArea };
+    if (maxArea !== null && pixels > maxArea) {
+      if (!request.downscale) throw { code: 'too-large', pixels, limit: maxArea };
       let fit: Fit;
       try {
-        const scale = Math.sqrt(request.maxArea / pixels);
+        const scale = Math.sqrt(maxArea / pixels);
         fit = { width: Math.max(1, Math.floor(bitmap.width * scale)),
           height: Math.max(1, Math.floor(bitmap.height * scale)) };
       } finally {
@@ -124,8 +143,8 @@ export async function convert(request: ConvertRequest, phase: Phase) {
       }
       bitmap = await decode(request.file, request.kind, fit);
       downscaled = true;
-      if (bitmap.width * bitmap.height > request.maxArea) {
-        throw { code: 'too-large', pixels, limit: request.maxArea };
+      if (bitmap.width * bitmap.height > maxArea) {
+        throw { code: 'too-large', pixels, limit: maxArea };
       }
     }
     const blob = await encode(bitmap, request.format, phase);
@@ -134,11 +153,11 @@ export async function convert(request: ConvertRequest, phase: Phase) {
   } catch (error) {
     if (typeof error === 'object' && error !== null && 'code' in error
         && error.code === 'too-large') {
-      throw { code: 'too-large', pixels, ...(request.maxArea === null ? {} : { limit: request.maxArea }) };
+      throw { code: 'too-large', pixels, ...(maxArea === null ? {} : { limit: maxArea }) };
     }
     // Canvas allocation/serialization failures are the browser's size boundary.
     if (error instanceof DOMException && ['IndexSizeError', 'EncodingError'].includes(error.name)) {
-      throw { code: 'too-large', pixels, ...(request.maxArea === null ? {} : { limit: request.maxArea }) };
+      throw { code: 'too-large', pixels, ...(maxArea === null ? {} : { limit: maxArea }) };
     }
     throw { code: 'failed' };
   } finally {

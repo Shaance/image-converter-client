@@ -21,12 +21,13 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
   AVIF where the browser decodes it. A file is identified by magic bytes (bounded
   header read), never by extension or `File.type` (iOS Safari 17 mislabels JPEGs
   as HEIC). Animated inputs become one still frame.
-- Output: JPEG, PNG, WebP, PDF, GIF, TIFF, the same six in every supported browser
-  and every state. Every gap is filled by a lazily loaded library, so no
-  "unsupported format" state exists. BMP output is dropped.
+- Output: JPEG, PNG, WebP, AVIF, JPEG XL, PDF, GIF, TIFF, the same eight in every
+  supported browser and every state. Every gap is filled by a lazily loaded
+  library, so no "unsupported format" state exists. BMP output is dropped.
 - Output files carry no metadata (no EXIF, no GPS, no colour profile); the footer
   says so in one line. Transparency is flattened onto white for JPEG, PDF and GIF;
-  PNG, WebP and TIFF keep alpha. JPEG quality 0.9, WebP quality 0.85. PDF: one
+  PNG, WebP, AVIF, JPEG XL and TIFF keep alpha. JPEG quality 0.9, WebP quality 0.85,
+  AVIF quality 50 / speed 6, JPEG XL quality 75 / effort 5. PDF: one
   page per file, page size = pixels / 300 per inch.
 - Supported browsers: `OffscreenCanvas`, `createImageBitmap`, module workers.
   API floors: Safari 16.4, Chrome 80, Firefox 114; product floor Safari 17 / iOS 17.
@@ -45,6 +46,9 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
   resizeQuality: 'high' })` to fit the area. Downscaling is an attempt: if it still
   fails the row fails. If the probe itself fails, no limit is invented, oversize
   rows just fail with "Too large for this browser" and no downscale action.
+  JPEG XL output also caps at 20 MP, because the single-threaded encoder's wasm
+  heap is fixed at 2 GB and larger encodes abort; oversize rows get the same
+  downscale action ("Convert at 20 MP").
 - No file-count cap. The header shows the running totals. Known limit, not
   mitigated in this build: very large batches on a phone can exhaust memory
   (results are kept as Blobs, the zip is a second copy). Copy never promises "any
@@ -140,13 +144,15 @@ Rules:
 
 - `pipeline.ts` has no Svelte and no DOM beyond `OffscreenCanvas`; it is the only
   module that touches codecs. Lazy `import()`: `@jsquash/webp` (only when the
-  native probe returns a blob whose `type !== 'image/webp'`), `heic-to/csp` with
+  native probe returns a blob whose `type !== 'image/webp'`), `@jsquash/avif` and
+  `@jsquash/jxl` (only for that output), `heic-to/csp` with
   `type: 'bitmap'` (only for HEIC; note it spawns its own nested worker), `gifenc`,
   `utif`, `pdf-lib` (only for that output).
 - Memory: `ImageBitmap.close()` in `finally`; canvases set to 0×0 after use;
   intermediate RGBA arrays are not retained; only thumbnails (≤ 88 px, JPEG) and
   result Blobs live past a job. Revoking a URL always accompanies dropping the Blob
-  reference.
+  reference. AVIF and JPEG XL re-initialise the codec (`init()`) before every file,
+  so one aborted encode cannot leave the cached module broken for later files.
 - Worker protocol (no RPC library):
   in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale }`
   out `{ type: 'phase', id, attempt, phase: 'loading-codec' | 'converting' }`,
@@ -154,7 +160,8 @@ Rules:
   `{ type: 'error', id, attempt, code, pixels?, limit? }`.
   The queue dispatches the next job only after the previous one settles.
 - Vite: `new Worker(new URL('./pipeline.worker.ts', import.meta.url), { type: 'module' })`,
-  `worker: { format: 'es' }`, `optimizeDeps: { exclude: ['@jsquash/webp'] }`.
+  `worker: { format: 'es' }`,
+  `optimizeDeps: { exclude: ['@jsquash/webp', '@jsquash/avif', '@jsquash/jxl'] }`.
   The production build must be checked for the lazy codec chunks and the wasm
   assets actually being fetched.
 - No user-agent sniffing anywhere.
@@ -180,7 +187,7 @@ is reserved for disabled states.
 
 ## Mock overrides
 
-- Six format chips in every state and viewport; they wrap on phones.
+- Eight format chips in every state and viewport; they wrap on phones.
 - "any size, any number" is removed from the drop-zone hint.
 - "Only formats this browser can produce are listed" is removed.
 - Progress is an indeterminate bar, not a percentage.
@@ -216,6 +223,8 @@ is reserved for disabled states.
 | Decode HEIC | heic-to 1.5.2, `heic-to/csp`, `type: "bitmap"` |
 | Encode JPEG/PNG | `OffscreenCanvas.convertToBlob` |
 | Encode WebP | native when `blob.type === 'image/webp'`, else @jsquash/webp 1.5.0 |
+| Encode AVIF | @jsquash/avif 2.1.1 (single-threaded build; the site is not cross-origin isolated) |
+| Encode JPEG XL | @jsquash/jxl 1.3.0 (same) |
 | Encode GIF | gifenc 1.0.3 (`quantize` rgb565, `applyPalette`, one frame) |
 | Encode TIFF | utif 3.1.0 `encodeImage(rgba, w, h)` |
 | Encode PDF | pdf-lib 1.17.1 (`embedJpg`, one page) |
@@ -228,8 +237,10 @@ is reserved for disabled states.
   bytes, output naming and zip de-duplication, queue transitions including the
   format-switch race and ignored stale results).
 - Built site (`vite preview`), Chromium and Safari, plus iOS Simulator Safari:
-  each of the six outputs from a JPEG, HEIC → JPEG, PNG with alpha → JPEG/PNG,
-  EXIF orientation 6 JPEG, a 48 MP image, a .mov dropped in, remove in flight,
+  each of the eight outputs from a JPEG, HEIC → JPEG, PNG with alpha → JPEG/PNG,
+  EXIF orientation 6 JPEG, a 48 MP image, a 24 MP JPEG → JPEG XL offers
+  "Convert at 20 MP", then converts, and a later 12 MP file still converts,
+  a .mov dropped in, remove in flight,
   format switch mid-batch, Download all, dark mode, 390 px width, reduced motion,
   keyboard-only run. Lazy codec chunk requests observed in the network panel.
 - Not covered in this build: Firefox (not installed here), physical iPhone memory
