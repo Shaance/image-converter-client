@@ -56,7 +56,10 @@ async function decodeRaw(file: File, limit: number, downscale: boolean, phase: P
     // half the limit), or when a full decode would exhaust the 2 GB heap;
     // otherwise decode full size and resize the bitmap to fit below.
     const halfSize = downscale && pixels > limit && (pixels / 4 >= limit / 2 || pixels > RAW_MAX_PIXELS);
-    const image = rawFile.decode({ useCameraWb: true, outputBps: 8, ...(halfSize ? { halfSize: true } : {}) });
+    // Camera white balance, 8-bit output, and the sRGB tone curve: the decoded
+    // bytes become sRGB ImageData, and LibRaw's default BT.709 gamma would
+    // darken shadows and midtones.
+    const image = rawFile.decode({ useCameraWb: true, outputBps: 8, gamma: [2.4, 12.92], ...(halfSize ? { halfSize: true } : {}) });
     try {
       const { data, width, height } = image.toImageData();
       const decoded = width * height;

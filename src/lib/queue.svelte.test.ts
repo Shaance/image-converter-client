@@ -44,6 +44,24 @@ describe('queue state and worker boundary', () => {
     worker.done(request);
     expect(queue.jobs[0].phase).toBeUndefined();
   });
+  it('only moves a phase forward within an attempt, and starts fresh on a new attempt', async () => {
+    await queue.add([file()]); await turn();
+    const request = worker.requests.at(-1)!;
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'loading-codec' });
+    expect(queue.jobs[0].phase).toBe('loading-codec');
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'converting' });
+    expect(queue.jobs[0].phase).toBe('converting');
+    // An output encoder loading after the decode must not rewind the phase.
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'loading-codec' });
+    expect(queue.jobs[0].phase).toBe('converting');
+    worker.done(request);
+    expect(queue.jobs[0].phase).toBeUndefined();
+    queue.setFormat('png'); await turn();
+    const next = worker.requests.at(-1)!;
+    expect(next.attempt).toBe(request.attempt + 1);
+    worker.send({ type: 'phase', id: next.id, attempt: next.attempt, phase: 'loading-codec' });
+    expect(queue.jobs[0].phase).toBe('loading-codec');
+  });
   it('adds duplicate files as separate queued jobs and dispatches only one', async () => {
     const input = file();
     const adding = queue.add([input, input]);

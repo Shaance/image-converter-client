@@ -421,7 +421,7 @@ it('decodes a RAW file through one lazily loaded wlibraw instance and frees ever
   const result = await freshConvert(rawRequest(), p => phases.push(p));
   expect(wlibraw.moduleLoads).toBe(1);
   expect(wlibraw.inits).toBe(1);
-  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8 }]);
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, gamma: [2.4, 12.92] }]);
   expect(wlibraw.files[0].image!.free).toHaveBeenCalledTimes(1);
   expect(wlibraw.files[0].close).toHaveBeenCalledTimes(1);
   expect(result).toMatchObject({ width: 6000, height: 4000, downscaled: false });
@@ -458,7 +458,7 @@ it('keeps the probed browser limit for RAW when it is smaller than the cap', asy
 it('decodes with halfSize when the quarter area keeps at least half the limit, then resizes to fit', async () => {
   wlibraw.metadata = { width: 10000, height: 10000 }; // 100 MP, limit 20 MP: quarter is 25 MP >= 10 MP
   const result = await convert(rawRequest({ maxArea: 20_000_000, downscale: true }), () => {});
-  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, halfSize: true }]);
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, gamma: [2.4, 12.92], halfSize: true }]);
   // The half decode is 5000x5000 (25 MP), still over 20 MP, so it is resized.
   expect(bitmapCalls[0].options).toEqual({ resizeWidth: 4472, resizeHeight: 4472, resizeQuality: 'high' });
   expect(result.downscaled).toBe(true);
@@ -467,7 +467,7 @@ it('decodes with halfSize when the quarter area keeps at least half the limit, t
 it('decodes a 61 MP RAW with halfSize at an iPhone-class 16.7 MP limit, without resizing', async () => {
   wlibraw.metadata = { width: 8960, height: 6800 }; // 61 MP, limit 16,777,216: quarter is 15.2 MP >= 8.4 MP
   const result = await convert(rawRequest({ maxArea: 16_777_216, downscale: true }), () => {});
-  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, halfSize: true }]);
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, gamma: [2.4, 12.92], halfSize: true }]);
   // The half decode is 4480x3400 (15.2 MP), already within the limit.
   expect(bitmapCalls[0].options).toEqual({});
   expect(result).toMatchObject({ width: 4480, height: 3400, downscaled: true });
@@ -475,7 +475,7 @@ it('decodes a 61 MP RAW with halfSize at an iPhone-class 16.7 MP limit, without 
 it('decodes a 24 MP RAW at full size at a 16.7 MP limit, then resizes to fit', async () => {
   wlibraw.metadata = { width: 6000, height: 4000 }; // 24 MP: quarter is 6 MP < 8.4 MP
   const result = await convert(rawRequest({ maxArea: 16_777_216, downscale: true }), () => {});
-  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8 }]);
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, gamma: [2.4, 12.92] }]);
   expect(bitmapCalls[0].options).toEqual({ resizeWidth: 5016, resizeHeight: 3344, resizeQuality: 'high' });
   expect(result.downscaled).toBe(true);
   expect(result.width * result.height).toBeLessThanOrEqual(16_777_216);
@@ -483,7 +483,7 @@ it('decodes a 24 MP RAW at full size at a 16.7 MP limit, then resizes to fit', a
 it('always decodes with halfSize above the RAW cap, even when the quarter area is below half the limit', async () => {
   wlibraw.metadata = { width: 12000, height: 10000 }; // 120 MP, over the 110 MP cap
   const result = await convert(rawRequest({ downscale: true }), () => {});
-  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, halfSize: true }]);
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, gamma: [2.4, 12.92], halfSize: true }]);
   expect(bitmapCalls[0].options).toEqual({});
   expect(result).toMatchObject({ width: 6000, height: 5000, downscaled: true });
 });

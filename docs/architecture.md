@@ -181,7 +181,10 @@ Rules:
   output is JPEG or PNG; the single-threaded wasm-bindgen entry, so the parallel
   wasm and its worker are never bundled), `heic-to/csp` with
   `type: 'bitmap'` (only for HEIC; note it spawns its own nested worker),
-  `@wasmedia/wlibraw` (only for RAW input; a fresh instance is created per file),
+  `@wasmedia/wlibraw` (only for RAW input; a fresh instance is created per file,
+  and each file decodes with camera white balance, 8-bit output and the sRGB
+  tone curve `gamma: [2.4, 12.92]`, because the decoded bytes become sRGB
+  ImageData and LibRaw's default BT.709 gamma would darken them),
   `gifenc`,
   `utif`, `pdf-lib` (only for that output).
 - Memory: `ImageBitmap.close()` in `finally`; canvases set to 0×0 after use;
