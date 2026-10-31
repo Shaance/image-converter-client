@@ -18,9 +18,13 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
 - No Convert button. Switching the output format while files are present starts a
   fresh attempt for every file and discards previous results.
 - Input: HEIC/HEIF (primary image only), JPEG, PNG, WebP, GIF (first frame), BMP,
-  AVIF where the browser decodes it. A file is identified by magic bytes (bounded
-  header read), never by extension or `File.type` (iOS Safari 17 mislabels JPEGs
-  as HEIC). Animated inputs become one still frame.
+  AVIF where the browser decodes it, and camera RAW files (CR2, CR3, NEF, ARW,
+  RAF, ORF, RW2, DNG and other LibRaw formats), decoded on the device. A file is
+  identified by magic bytes (bounded header read), never by extension or
+  `File.type` (iOS Safari 17 mislabels JPEGs as HEIC). RAW magics: TIFF
+  `II*\0`/`MM\0*`, Panasonic `IIU\0`, Olympus `IIRO`/`IIRS`/`MMOR`, Fujifilm
+  `FUJIFILMCCD-RAW`, and an ISO-BMFF `ftyp` box with the `crx ` brand (CR3).
+  Animated inputs become one still frame.
 - Output: JPEG, PNG, WebP, AVIF, JPEG XL, PDF, GIF, TIFF, the same eight in every
   supported browser and every state. Every gap is filled by a lazily loaded
   library, so no "unsupported format" state exists. BMP output is dropped.
@@ -59,6 +63,17 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
   heap is fixed at 2 GB and larger encodes abort; oversize rows read "Too large
   for JPEG XL (24 MP, limit 20 MP)" and get the same downscale action
   ("Convert at 20 MP").
+- Camera RAW input caps at 110 MP, because the wlibraw wasm heap is also fixed
+  at 2 GB and a 101 MP decode used about 1.5 GB of it; oversize RAW rows read
+  "Too large for RAW decoding (150 MP, limit 110 MP)" and get the same downscale
+  action ("Convert at 110 MP"). The RAW size check runs on the file metadata
+  before the full decode, so an oversize RAW fails without spending the decode.
+  With consent, a RAW decodes half-size when the half-size area (about a quarter
+  of the pixels) keeps at least half the allowed pixels (about 4x less wasm
+  heap), or when a full decode would exceed the
+  heap, and is otherwise decoded full size; the decoded bitmap is then resized
+  to fit the limit when it still exceeds it. The RAW cap combines with the JPEG
+  XL cap (smallest wins).
 - No file-count cap. The header shows the running totals. Known limit, not
   mitigated in this build: very large batches on a phone can exhaust memory
   (results are kept as Blobs, the zip is a second copy). Copy never promises "any
@@ -165,7 +180,9 @@ Rules:
   `@jsquash/oxipng/codec/pkg/squoosh_oxipng.js` (only when `smaller` is on and the
   output is JPEG or PNG; the single-threaded wasm-bindgen entry, so the parallel
   wasm and its worker are never bundled), `heic-to/csp` with
-  `type: 'bitmap'` (only for HEIC; note it spawns its own nested worker), `gifenc`,
+  `type: 'bitmap'` (only for HEIC; note it spawns its own nested worker),
+  `@wasmedia/wlibraw` (only for RAW input; a fresh instance is created per file),
+  `gifenc`,
   `utif`, `pdf-lib` (only for that output).
 - Memory: `ImageBitmap.close()` in `finally`; canvases set to 0×0 after use;
   intermediate RGBA arrays are not retained; only thumbnails (≤ 88 px, JPEG) and
@@ -175,6 +192,12 @@ Rules:
   later files, while healthy batches reuse one compiled module. OxiPNG instead
   falls back to the native PNG blob on any failure (chunk fetch, init, optimise),
   because wasm-bindgen's `init()` caches the instance and re-init would be a no-op.
+  The wlibraw instance is dropped after every RAW file (only the local reference
+  inside the decode): its wasm heap stays at the decode's high-water mark, up to
+  ~1.5 GB at 101 MP, while a fresh instance costs ~20-40 ms against seconds of
+  decoding. A file that matches a RAW magic but is not a raw camera file (a plain
+  TIFF) makes LibRaw fail with LIBRAW_FILE_UNSUPPORTED; that surfaces as
+  `unrecognized` ("Not an image we can read"), any other RAW failure as `failed`.
 - Worker protocol (no RPC library):
   in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale, smaller }`
   out `{ type: 'phase', id, attempt, phase: 'loading-codec' | 'converting' }`,
@@ -183,7 +206,7 @@ Rules:
   The queue dispatches the next job only after the previous one settles.
 - Vite: `new Worker(new URL('./pipeline.worker.ts', import.meta.url), { type: 'module' })`,
   `worker: { format: 'es' }`,
-  `optimizeDeps: { exclude: ['@jsquash/webp', '@jsquash/avif', '@jsquash/jxl', '@jsquash/jpeg', '@jsquash/oxipng'] }`.
+  `optimizeDeps: { exclude: ['@jsquash/webp', '@jsquash/avif', '@jsquash/jxl', '@jsquash/jpeg', '@jsquash/oxipng', '@wasmedia/wlibraw'] }`.
   The production build must be checked for the lazy codec chunks and the wasm
   assets actually being fetched.
 - No user-agent sniffing anywhere.
@@ -193,8 +216,10 @@ Rules:
 - Server mode: the mode switch is a native radio group whose "Server" option is
   disabled (`disabled` attribute, plus the "coming back soon" tag in its label).
   Nothing else exists for it. No interface, no stub.
-- The file input `accept` lists `image/*,.heic,.heif,image/heic,image/heif` so
-  iOS hands over HEIC originals instead of transcoding.
+- The file input `accept` lists `image/*,.heic,.heif,image/heic,image/heif` plus
+  the RAW extensions `.dng,.cr2,.cr3,.nef,.arw,.raf,.orf,.rw2,.pef,.srw,.iiq,image/x-adobe-dng`
+  so iOS hands over HEIC originals instead of transcoding and pickers on all
+  platforms offer RAW files.
 
 ## Accessibility
 
@@ -243,6 +268,7 @@ is reserved for disabled states.
 |---|---|
 | Decode JPEG/PNG/WebP/GIF/BMP/AVIF | `createImageBitmap(Blob)` (default `imageOrientation`, verified with oriented JPEGs) |
 | Decode HEIC | heic-to 1.5.2, `heic-to/csp`, `type: "bitmap"` |
+| Decode camera RAW | @wasmedia/wlibraw 0.3.0 (LibRaw 0.22.2, LGPL-2.1, single-threaded + SIMD) |
 | Encode JPEG/PNG | `OffscreenCanvas.convertToBlob` |
 | Encode WebP | native when `blob.type === 'image/webp'`, else @jsquash/webp 1.5.0 |
 | Encode AVIF | @jsquash/avif 2.1.1 (single-threaded build; the site is not cross-origin isolated) |
@@ -266,6 +292,9 @@ is reserved for disabled states.
   fetched, native fallback intact),
   EXIF orientation 6 JPEG, a 48 MP image, a 24 MP JPEG → JPEG XL offers
   "Convert at 20 MP", then converts, and a later 12 MP file still converts,
+  a CR3 and a DNG → JPEG (wlibraw chunk and wasm fetched, "Loading RAW decoder…"
+  phase visible), a 150 MP RAW offers "Convert at 110 MP" and converts half-size,
+  a plain TIFF reads "Not an image we can read",
   a .mov dropped in, remove in flight,
   format switch mid-batch, Download all, dark mode, 390 px width, reduced motion,
   keyboard-only run. Lazy codec chunk requests observed in the network panel.

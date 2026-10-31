@@ -26,7 +26,7 @@
     ondragover={event => event.preventDefault()}
     ondragleave={() => { if (--depth <= 0) { depth = 0; dragging = false; } }} ondrop={drop}>
     <input bind:this={input} class="visually-hidden" type="file" multiple
-      accept="image/*,.heic,.heif,image/heic,image/heif"
+      accept="image/*,.heic,.heif,image/heic,image/heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.orf,.rw2,.pef,.srw,.iiq,image/x-adobe-dng"
       onchange={event => { onadd(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }} />
     <span class="icon"><Icons name="upload" /></span>
     {#if ready}

@@ -15,6 +15,50 @@ vi.mock('@jsquash/avif/encode.js', () => ({ default: jsquash.avif.encode, init: 
 vi.mock('@jsquash/jxl/encode.js', () => ({ default: jsquash.jxl.encode, init: jsquash.jxl.init }));
 vi.mock('@jsquash/jpeg/encode.js', () => ({ default: jsquash.jpeg.encode, init: jsquash.jpeg.init }));
 vi.mock('@jsquash/oxipng/codec/pkg/squoosh_oxipng.js', () => ({ default: jsquash.oxipng.init, optimise: jsquash.oxipng.optimise }));
+// Mocked wlibraw: a module-load counter plus per-file open/decode/close records.
+const wlibraw = vi.hoisted(() => ({
+  moduleLoads: 0,
+  inits: 0,
+  metadata: { width: 6000, height: 4000 },
+  openError: null as unknown,
+  decodeError: null as unknown,
+  decodeOptions: [] as Record<string, unknown>[],
+  files: [] as { metadata: { width: number; height: number }; decode: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+    image?: { toImageData: () => { data: Uint8ClampedArray; width: number; height: number };
+      free: ReturnType<typeof vi.fn> } }[],
+}));
+vi.mock('@wasmedia/wlibraw', () => {
+  wlibraw.moduleLoads++;
+  return {
+    initWLibraw: vi.fn(async () => {
+      wlibraw.inits++;
+      return {
+        open: (_bytes: Uint8Array) => {
+          if (wlibraw.openError) throw wlibraw.openError;
+          const meta = wlibraw.metadata;
+          const file: (typeof wlibraw.files)[number] = {
+            metadata: { ...meta },
+            decode: vi.fn((options: { halfSize?: boolean }) => {
+              wlibraw.decodeOptions.push(options);
+              if (wlibraw.decodeError) throw wlibraw.decodeError;
+              const width = options.halfSize ? Math.floor(meta.width / 2) : meta.width;
+              const height = options.halfSize ? Math.floor(meta.height / 2) : meta.height;
+              file.image = {
+                toImageData: () => ({ data: new Uint8ClampedArray(width * height * 4), width, height }),
+                free: vi.fn(),
+              };
+              return file.image;
+            }),
+            close: vi.fn(),
+          };
+          wlibraw.files.push(file);
+          return file;
+        },
+      };
+    }),
+  };
+});
 // Re-registers the standard codec mocks after a test overrode them with vi.doMock.
 function restoreCodecMocks() {
   vi.doMock('@jsquash/jpeg/encode.js', () => ({ default: jsquash.jpeg.encode, init: jsquash.jpeg.init }));
@@ -23,6 +67,7 @@ function restoreCodecMocks() {
 }
 let canvases: FakeCanvas[];
 let bitmaps: { width: number; height: number; closed: boolean; close(): void }[];
+let bitmapCalls: { source: unknown; options: ImageBitmapOptions | undefined }[];
 let nativeMime: string;
 let encodeFailure: boolean;
 let contextFails: boolean;
@@ -45,14 +90,21 @@ class FakeCanvas {
 const request: ConvertRequest = { type: 'convert', id: 'one', attempt: 0,
   file: new File(['image'], 'image.jpg'), kind: 'jpeg', format: 'png', maxArea: 16, downscale: false, smaller: false };
 beforeEach(() => {
-  canvases = []; bitmaps = []; nativeMime = 'image/webp'; encodeFailure = false; contextFails = false;
+  canvases = []; bitmaps = []; bitmapCalls = []; nativeMime = 'image/webp'; encodeFailure = false; contextFails = false;
   jsquash.avif.init.mockClear(); jsquash.avif.encode.mockClear();
   jsquash.jxl.init.mockClear(); jsquash.jxl.encode.mockClear();
   jsquash.jpeg.init.mockClear(); jsquash.jpeg.encode.mockClear();
   jsquash.oxipng.init.mockClear(); jsquash.oxipng.optimise.mockClear();
+  wlibraw.moduleLoads = 0; wlibraw.inits = 0; wlibraw.decodeOptions = []; wlibraw.files = [];
+  wlibraw.metadata = { width: 6000, height: 4000 }; wlibraw.openError = null; wlibraw.decodeError = null;
   vi.stubGlobal('OffscreenCanvas', FakeCanvas);
-  vi.stubGlobal('createImageBitmap', async (_: Blob, options: ImageBitmapOptions) => {
-    const bitmap = { width: options.resizeWidth ?? 8, height: options.resizeHeight ?? 8,
+  vi.stubGlobal('ImageData', class ImageData {
+    constructor(public data: Uint8ClampedArray, public width: number, public height: number) {}
+  });
+  vi.stubGlobal('createImageBitmap', async (source: unknown, options: ImageBitmapOptions) => {
+    bitmapCalls.push({ source, options });
+    const src = source as { width?: number; height?: number };
+    const bitmap = { width: options?.resizeWidth ?? src.width ?? 8, height: options?.resizeHeight ?? src.height ?? 8,
       closed: false, close() { this.closed = true; } };
     bitmaps.push(bitmap);
     return bitmap;
@@ -353,4 +405,100 @@ it('encodes actual TIFF bytes with straight alpha and no source metadata', async
   expect(tags.has(34853)).toBe(false); // GPS
   expect(tags.has(34675)).toBe(false); // ICC profile
   expect(Array.from(new Uint8Array(data).slice(1000))).toEqual([200, 100, 50, 128]);
+});
+
+const rawRequest = (over: Partial<ConvertRequest> = {}): ConvertRequest => ({
+  ...request, kind: 'raw', file: new File(['raw bytes'], 'photo.cr3'), format: 'png',
+  maxArea: null, downscale: false, ...over,
+});
+const unsupportedRaw = () => Object.assign(
+  new Error('libraw_open_buffer: Unsupported file format (-2)'), { name: 'WLibRawError', code: -2 });
+
+it('decodes a RAW file through one lazily loaded wlibraw instance and frees everything', async () => {
+  vi.resetModules();
+  const { convert: freshConvert } = await import('./pipeline');
+  const phases: string[] = [];
+  const result = await freshConvert(rawRequest(), p => phases.push(p));
+  expect(wlibraw.moduleLoads).toBe(1);
+  expect(wlibraw.inits).toBe(1);
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8 }]);
+  expect(wlibraw.files[0].image!.free).toHaveBeenCalledTimes(1);
+  expect(wlibraw.files[0].close).toHaveBeenCalledTimes(1);
+  expect(result).toMatchObject({ width: 6000, height: 4000, downscaled: false });
+  expect(result.blob.type).toBe('image/png');
+  expect(phases).toEqual(['loading-codec', 'converting']);
+  expect(bitmaps[0].closed).toBe(true);
+});
+it.each(['jpeg', 'png', 'avif', 'webp'] as const)('never loads wlibraw for %s input', async kind => {
+  vi.resetModules();
+  const { convert: freshConvert } = await import('./pipeline');
+  await freshConvert({ ...request, kind, maxArea: null }, () => {});
+  expect(wlibraw.moduleLoads).toBe(0);
+  expect(wlibraw.inits).toBe(0);
+});
+it('rejects an oversize RAW from its metadata without decoding', async () => {
+  wlibraw.metadata = { width: 12000, height: 12500 }; // 150 MP, over the 110 MP cap
+  await expect(convert(rawRequest(), () => {}))
+    .rejects.toEqual({ code: 'too-large', pixels: 150_000_000, limit: 110_000_000 });
+  expect(wlibraw.decodeOptions).toEqual([]);
+  expect(wlibraw.files[0].close).toHaveBeenCalledTimes(1);
+  expect(bitmaps).toEqual([]);
+});
+it('combines the RAW cap with the JPEG XL cap, smallest wins', async () => {
+  wlibraw.metadata = { width: 5000, height: 5000 }; // 25 MP
+  await expect(convert(rawRequest({ format: 'jxl' }), () => {}))
+    .rejects.toEqual({ code: 'too-large', pixels: 25_000_000, limit: 20_000_000 });
+  expect(wlibraw.decodeOptions).toEqual([]);
+});
+it('keeps the probed browser limit for RAW when it is smaller than the cap', async () => {
+  wlibraw.metadata = { width: 5000, height: 5000 }; // 25 MP
+  await expect(convert(rawRequest({ maxArea: 16_000_000 }), () => {}))
+    .rejects.toEqual({ code: 'too-large', pixels: 25_000_000, limit: 16_000_000 });
+});
+it('decodes with halfSize when the quarter area keeps at least half the limit, then resizes to fit', async () => {
+  wlibraw.metadata = { width: 10000, height: 10000 }; // 100 MP, limit 20 MP: quarter is 25 MP >= 10 MP
+  const result = await convert(rawRequest({ maxArea: 20_000_000, downscale: true }), () => {});
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, halfSize: true }]);
+  // The half decode is 5000x5000 (25 MP), still over 20 MP, so it is resized.
+  expect(bitmapCalls[0].options).toEqual({ resizeWidth: 4472, resizeHeight: 4472, resizeQuality: 'high' });
+  expect(result.downscaled).toBe(true);
+  expect(result.width * result.height).toBeLessThanOrEqual(20_000_000);
+});
+it('decodes a 61 MP RAW with halfSize at an iPhone-class 16.7 MP limit, without resizing', async () => {
+  wlibraw.metadata = { width: 8960, height: 6800 }; // 61 MP, limit 16,777,216: quarter is 15.2 MP >= 8.4 MP
+  const result = await convert(rawRequest({ maxArea: 16_777_216, downscale: true }), () => {});
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, halfSize: true }]);
+  // The half decode is 4480x3400 (15.2 MP), already within the limit.
+  expect(bitmapCalls[0].options).toEqual({});
+  expect(result).toMatchObject({ width: 4480, height: 3400, downscaled: true });
+});
+it('decodes a 24 MP RAW at full size at a 16.7 MP limit, then resizes to fit', async () => {
+  wlibraw.metadata = { width: 6000, height: 4000 }; // 24 MP: quarter is 6 MP < 8.4 MP
+  const result = await convert(rawRequest({ maxArea: 16_777_216, downscale: true }), () => {});
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8 }]);
+  expect(bitmapCalls[0].options).toEqual({ resizeWidth: 5016, resizeHeight: 3344, resizeQuality: 'high' });
+  expect(result.downscaled).toBe(true);
+  expect(result.width * result.height).toBeLessThanOrEqual(16_777_216);
+});
+it('always decodes with halfSize above the RAW cap, even when the quarter area is below half the limit', async () => {
+  wlibraw.metadata = { width: 12000, height: 10000 }; // 120 MP, over the 110 MP cap
+  const result = await convert(rawRequest({ downscale: true }), () => {});
+  expect(wlibraw.decodeOptions).toEqual([{ useCameraWb: true, outputBps: 8, halfSize: true }]);
+  expect(bitmapCalls[0].options).toEqual({});
+  expect(result).toMatchObject({ width: 6000, height: 5000, downscaled: true });
+});
+it('maps a LibRaw unsupported-format error to unrecognized, whether thrown at open or decode', async () => {
+  wlibraw.openError = unsupportedRaw();
+  await expect(convert(rawRequest(), () => {})).rejects.toEqual({ code: 'unrecognized' });
+  wlibraw.openError = null;
+  wlibraw.decodeError = unsupportedRaw();
+  await expect(convert(rawRequest(), () => {})).rejects.toEqual({ code: 'unrecognized' });
+});
+it('maps any other RAW failure to failed and creates a fresh instance for the next file', async () => {
+  wlibraw.decodeError = new Error('aborted');
+  await expect(convert(rawRequest(), () => {})).rejects.toEqual({ code: 'failed' });
+  wlibraw.decodeError = null;
+  const result = await convert(rawRequest(), () => {});
+  expect(result.width).toBe(6000);
+  expect(wlibraw.inits).toBe(2); // no wlibraw instance is kept between files
 });

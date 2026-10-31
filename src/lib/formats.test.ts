@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { JXL_MAX_PIXELS, OUTPUT_FORMATS, sniff } from './formats';
+import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, sniff } from './formats';
 import { outputName, uniqueNames, formatBytes } from './names';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
@@ -32,6 +32,25 @@ describe('magic bytes', () => {
   });
   it.each(['avif', 'avis'])('prioritizes AVIF brand %s over generic HEIF', brand => {
     expect(sniff(ftyp('mif1', brand))).toBe('avif');
+  });
+  it.each([
+    ['cr2', new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0x10, 0x00, 0x00, 0x00, 0x43, 0x52, 0x02, 0x00])],
+    ['nef/arw/leica dng', new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00])],
+    ['iphone dng', new Uint8Array([0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x12])],
+    ['rw2', new Uint8Array([0x49, 0x49, 0x55, 0x00, 0x18, 0x00, 0x00, 0x00])],
+    ['raf', bytes('FUJIFILMCCD-RAW 0201\x00\x00\x00\x00')],
+    ['cr3', ftyp('crx ', 'crx ', 'isom')],
+    ['orf IIRO', bytes('IIRO\x08\x00\x00\x00')],
+    ['orf IIRS', bytes('IIRS\x08\x00\x00\x00')],
+    ['orf MMOR', bytes('MMOR\x08\x00\x00\x00')],
+  ])('recognizes camera RAW %s by magic bytes', (kind, header) => {
+    expect(sniff(header as Uint8Array)).toBe('raw');
+  });
+  it('checks the crx brand before the HEIF brands', () => {
+    expect(sniff(ftyp('crx ', 'isom', 'heic'))).toBe('raw');
+  });
+  it('exports the 110 MP RAW pixel cap', () => {
+    expect(RAW_MAX_PIXELS).toBe(110_000_000);
   });
   it('does not inspect bytes outside the ftyp box', () => {
     const header = ftyp('xxxx', 'heic');
