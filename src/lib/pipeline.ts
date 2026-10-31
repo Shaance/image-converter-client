@@ -162,13 +162,16 @@ export async function convert(request: ConvertRequest, phase: Phase) {
     const preview = await thumbnail(bitmap);
     return { blob, thumbnail: preview, width: bitmap.width, height: bitmap.height, downscaled };
   } catch (error) {
+    // Report the effective limit only when downscaling to it would actually shrink
+    // the image; otherwise fall back to the probed browser limit (omitted when null).
+    const limit = pixels !== undefined && maxArea !== null && pixels > maxArea ? maxArea : request.maxArea;
     if (typeof error === 'object' && error !== null && 'code' in error
         && error.code === 'too-large') {
-      throw { code: 'too-large', pixels, ...(maxArea === null ? {} : { limit: maxArea }) };
+      throw { code: 'too-large', pixels, ...(limit === null ? {} : { limit }) };
     }
     // Canvas allocation/serialization failures are the browser's size boundary.
     if (error instanceof DOMException && ['IndexSizeError', 'EncodingError'].includes(error.name)) {
-      throw { code: 'too-large', pixels, ...(maxArea === null ? {} : { limit: maxArea }) };
+      throw { code: 'too-large', pixels, ...(limit === null ? {} : { limit }) };
     }
     throw { code: 'failed' };
   } finally {

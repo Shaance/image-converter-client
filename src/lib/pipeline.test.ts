@@ -14,11 +14,13 @@ let canvases: FakeCanvas[];
 let bitmaps: { width: number; height: number; closed: boolean; close(): void }[];
 let nativeMime: string;
 let encodeFailure: boolean;
+let contextFails: boolean;
 class FakeCanvas {
   fillRectCalls = 0;
   convertToBlobCalls = 0;
   constructor(public width: number, public height: number) { canvases.push(this); }
   getContext() {
+    if (contextFails) return null;
     const canvas = this;
     return { fillStyle: '', fillRect() { canvas.fillRectCalls++; }, drawImage() {},
       getImageData: () => ({ data: new Uint8ClampedArray([200, 100, 50, 128]), width: 1, height: 1 }) };
@@ -32,7 +34,7 @@ class FakeCanvas {
 const request: ConvertRequest = { type: 'convert', id: 'one', attempt: 0,
   file: new File(['image'], 'image.jpg'), kind: 'jpeg', format: 'png', maxArea: 16, downscale: false };
 beforeEach(() => {
-  canvases = []; bitmaps = []; nativeMime = 'image/webp'; encodeFailure = false;
+  canvases = []; bitmaps = []; nativeMime = 'image/webp'; encodeFailure = false; contextFails = false;
   jsquash.avif.init.mockClear(); jsquash.avif.encode.mockClear();
   jsquash.jxl.init.mockClear(); jsquash.jxl.encode.mockClear();
   vi.stubGlobal('OffscreenCanvas', FakeCanvas);
@@ -167,6 +169,16 @@ it('does not cap AVIF at 20 MP when the browser probe failed', async () => {
   const result = await convert({ ...request, format: 'avif', maxArea: null }, () => {});
   expect(result.width * result.height).toBe(25_000_000);
   expect(result.blob.type).toBe('image/avif');
+});
+it('reports no invented limit for a canvas failure on JPEG XL when the probe failed', async () => {
+  contextFails = true;
+  await expect(convert({ ...request, format: 'jxl', maxArea: null }, () => {}))
+    .rejects.toEqual({ code: 'too-large', pixels: 64 });
+});
+it('reports the probed browser limit, not the 20 MP cap, for a canvas failure on JPEG XL', async () => {
+  contextFails = true;
+  await expect(convert({ ...request, format: 'jxl', maxArea: 1000 }, () => {}))
+    .rejects.toEqual({ code: 'too-large', pixels: 64, limit: 1000 });
 });
 it('encodes actual TIFF bytes with straight alpha and no source metadata', async () => {
   const blob = await encode({ width: 1, height: 1 } as ImageBitmap, 'tiff', () => {});
