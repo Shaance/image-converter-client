@@ -4,6 +4,6 @@ export default defineConfig({
   plugins: [svelte()],
   worker: { format: 'es' },
   build: { target: ['chrome80', 'firefox114', 'safari17'] },
-  optimizeDeps: { exclude: ['@jsquash/webp'] },
+  optimizeDeps: { exclude: ['@jsquash/webp', '@jsquash/avif', '@jsquash/jxl'] },
   test: { environment: 'node' },
 });
