@@ -88,7 +88,12 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
       || data.id !== inFlight?.id || data.attempt !== inFlight.attempt) return;
     workerStatus = { status: 'ready' };
     const job = jobs.find(job => job.id === data.id && job.attempt === data.attempt);
-    if (data.type === 'phase') { if (job) job.phase = data.phase; return; }
+    if (data.type === 'phase') {
+      // A phase only moves forward within an attempt: an output encoder's
+      // loading-codec must not overwrite the converting phase a decode reported.
+      if (job && !(data.phase === 'loading-codec' && job.phase === 'converting')) job.phase = data.phase;
+      return;
+    }
     inFlight = undefined;
     if (job) {
       job.phase = undefined;

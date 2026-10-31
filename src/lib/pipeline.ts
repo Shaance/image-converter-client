@@ -1,4 +1,4 @@
-import { JXL_MAX_PIXELS, OUTPUT_FORMATS, type InputKind, type OutputFormat } from './formats';
+import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, type InputKind, type OutputFormat } from './formats';
 
 export type ConversionError = {
   code: 'unrecognized' | 'too-large' | 'failed' | 'worker-lost';
@@ -23,6 +23,64 @@ const JXL_ENCODE_OPTIONS = { quality: 75, effort: 5 };
 const MOZJPEG_ENCODE_OPTIONS = { quality: 85, progressive: true };
 // Set when a codec's last encode threw; its cached jSquash module may be broken.
 const codecFailed: Record<'avif' | 'jxl' | 'jpeg', boolean> = { avif: false, jxl: false, jpeg: false };
+
+// LibRaw's LIBRAW_FILE_UNSUPPORTED: wlibraw throws it (as a WLibRawError with
+// this code) when the bytes are not a raw camera file. A plain TIFF also
+// matches the TIFF magic in sniff(), so this is what tells it apart.
+const LIBRAW_FILE_UNSUPPORTED = -2;
+function isUnsupportedRaw(error: unknown): boolean {
+  return typeof error === 'object' && error !== null
+    && (error as { name?: unknown }).name === 'WLibRawError'
+    && (error as { code?: unknown }).code === LIBRAW_FILE_UNSUPPORTED;
+}
+
+type RawDecode = { bitmap: ImageBitmap; pixels: number; downscaled: boolean };
+
+// Decodes one camera RAW file. A fresh wlibraw instance is created per file and
+// dropped when this returns: the wasm heap stays at the decode's high-water
+// mark (up to ~1.5 GB at 101 MP), so a kept instance would hold that between
+// files, while a fresh instance costs ~20-40 ms against seconds of decoding.
+async function decodeRaw(file: File, limit: number, downscale: boolean, phase: Phase): Promise<RawDecode> {
+  const { initWLibraw } = await import('@wasmedia/wlibraw');
+  const wl = await initWLibraw();
+  // The module is loaded; the open + full decode below is the long part.
+  phase('converting');
+  const rawFile = wl.open(new Uint8Array(await file.arrayBuffer()));
+  try {
+    const pixels = rawFile.metadata.width * rawFile.metadata.height;
+    // Size check on the metadata, before the full decode: without consent an
+    // oversize RAW fails without spending the decode.
+    if (pixels > limit && !downscale) throw { code: 'too-large', pixels, limit };
+    // Half-size when the quarter area keeps at least half the allowed pixels
+    // (about 4x less wasm heap, accepted when the result still carries at least
+    // half the limit), or when a full decode would exhaust the 2 GB heap;
+    // otherwise decode full size and resize the bitmap to fit below.
+    const halfSize = downscale && pixels > limit && (pixels / 4 >= limit / 2 || pixels > RAW_MAX_PIXELS);
+    // Camera white balance, 8-bit output, and the sRGB tone curve: the decoded
+    // bytes become sRGB ImageData, and LibRaw's default BT.709 gamma would
+    // darken shadows and midtones.
+    const image = rawFile.decode({ useCameraWb: true, outputBps: 8, gamma: [2.4, 12.92], ...(halfSize ? { halfSize: true } : {}) });
+    try {
+      const { data, width, height } = image.toImageData();
+      const decoded = width * height;
+      const resize = downscale && decoded > limit;
+      const options: ImageBitmapOptions = resize ? {
+        resizeWidth: Math.max(1, Math.floor(width * Math.sqrt(limit / decoded))),
+        resizeHeight: Math.max(1, Math.floor(height * Math.sqrt(limit / decoded))),
+        resizeQuality: 'high',
+      } : {};
+      return {
+        bitmap: await createImageBitmap(new ImageData(data as Uint8ClampedArray<ArrayBuffer>, width, height), options),
+        pixels,
+        downscaled: halfSize || resize,
+      };
+    } finally {
+      image.free();
+    }
+  } finally {
+    rawFile.close();
+  }
+}
 
 // The caller owns the returned bitmap and closes it in finally.
 export async function decode(file: File, kind: InputKind, fitTo?: Fit): Promise<ImageBitmap> {
@@ -165,38 +223,56 @@ export async function thumbnail(bitmap: ImageBitmap): Promise<Blob> {
 }
 
 export async function convert(request: ConvertRequest, phase: Phase) {
-  const maxArea = request.format === 'jxl'
-    ? Math.min(request.maxArea ?? JXL_MAX_PIXELS, JXL_MAX_PIXELS)
-    : request.maxArea;
+  let maxArea = request.maxArea;
+  if (request.format === 'jxl') maxArea = Math.min(maxArea ?? JXL_MAX_PIXELS, JXL_MAX_PIXELS);
+  if (request.kind === 'raw') maxArea = Math.min(maxArea ?? RAW_MAX_PIXELS, RAW_MAX_PIXELS);
   let bitmap: ImageBitmap | undefined;
   let pixels: number | undefined;
   let downscaled = false;
   try {
-    if (request.kind === 'heic') phase('loading-codec');
-    bitmap = await decode(request.file, request.kind);
-    phase('converting');
-    pixels = bitmap.width * bitmap.height;
-    if (maxArea !== null && pixels > maxArea) {
-      if (!request.downscale) throw { code: 'too-large', pixels, limit: maxArea };
-      let fit: Fit;
-      try {
-        const scale = Math.sqrt(maxArea / pixels);
-        fit = { width: Math.max(1, Math.floor(bitmap.width * scale)),
-          height: Math.max(1, Math.floor(bitmap.height * scale)) };
-      } finally {
-        // Release the full-size decode before allocating the resized bitmap.
-        bitmap.close(); bitmap = undefined;
-      }
-      bitmap = await decode(request.file, request.kind, fit);
-      downscaled = true;
-      if (bitmap.width * bitmap.height > maxArea) {
-        throw { code: 'too-large', pixels, limit: maxArea };
+    if (request.kind === 'heic' || request.kind === 'raw') phase('loading-codec');
+    if (request.kind === 'raw') {
+      // RAW decodes through wlibraw; its oversize check runs on the file
+      // metadata before the full decode, inside decodeRaw, which also emits
+      // phase('converting') once the codec module is loaded.
+      const limit = maxArea ?? RAW_MAX_PIXELS;
+      const raw = await decodeRaw(request.file, limit, request.downscale, phase);
+      bitmap = raw.bitmap;
+      pixels = raw.pixels;
+      downscaled = raw.downscaled;
+      if (bitmap.width * bitmap.height > limit) throw { code: 'too-large', pixels, limit };
+    } else {
+      bitmap = await decode(request.file, request.kind);
+      phase('converting');
+      pixels = bitmap.width * bitmap.height;
+      if (maxArea !== null && pixels > maxArea) {
+        if (!request.downscale) throw { code: 'too-large', pixels, limit: maxArea };
+        let fit: Fit;
+        try {
+          const scale = Math.sqrt(maxArea / pixels);
+          fit = { width: Math.max(1, Math.floor(bitmap.width * scale)),
+            height: Math.max(1, Math.floor(bitmap.height * scale)) };
+        } finally {
+          // Release the full-size decode before allocating the resized bitmap.
+          bitmap.close(); bitmap = undefined;
+        }
+        bitmap = await decode(request.file, request.kind, fit);
+        downscaled = true;
+        if (bitmap.width * bitmap.height > maxArea) {
+          throw { code: 'too-large', pixels, limit: maxArea };
+        }
       }
     }
     const blob = await encode(bitmap, request.format, phase, request.smaller);
     const preview = await thumbnail(bitmap);
     return { blob, thumbnail: preview, width: bitmap.width, height: bitmap.height, downscaled };
   } catch (error) {
+    // A RAW oversize is known from the file metadata before any bitmap exists.
+    if (pixels === undefined && typeof error === 'object' && error !== null
+        && 'code' in error && error.code === 'too-large' && 'pixels' in error
+        && typeof error.pixels === 'number') {
+      pixels = error.pixels;
+    }
     // Report the effective limit only when downscaling to it would actually shrink
     // the image; otherwise fall back to the probed browser limit (omitted when null).
     const limit = pixels !== undefined && maxArea !== null && pixels > maxArea ? maxArea : request.maxArea;
@@ -208,6 +284,9 @@ export async function convert(request: ConvertRequest, phase: Phase) {
     if (error instanceof DOMException && ['IndexSizeError', 'EncodingError'].includes(error.name)) {
       throw { code: 'too-large', pixels, ...(limit === null ? {} : { limit }) };
     }
+    // A file that matches a RAW magic but is not a raw camera file (a plain
+    // TIFF) reads as "Not an image we can read".
+    if (isUnsupportedRaw(error)) throw { code: 'unrecognized' };
     throw { code: 'failed' };
   } finally {
     bitmap?.close();

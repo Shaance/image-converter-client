@@ -7,7 +7,7 @@ Everything happens in your browser, so your files never leave your device.
 
 ## What it does
 
-- Drop in HEIC, JPEG, PNG, WebP, GIF, BMP or AVIF files and they convert immediately, no button to press.
+- Drop in HEIC, JPEG, PNG, WebP, GIF, BMP, AVIF or camera RAW files (CR2, CR3, NEF, ARW, RAF, DNG and more) and they convert immediately, no button to press.
 - Pick JPEG, PNG, WebP, AVIF, JPEG XL, PDF, GIF or TIFF as the output. Changing the format re-converts the whole batch.
 - For JPEG and PNG output, an optional "Smaller files" toggle encodes with MozJPEG and runs PNGs through OxiPNG for smaller files, at the cost of slower conversions.
 - Download each file on its own, or grab everything as one zip.
@@ -25,6 +25,7 @@ are loaded on demand so the initial page stays small:
 | Need | Library |
 | --- | --- |
 | HEIC and HEIF decoding | [heic-to](https://github.com/hoppergee/heic-to) |
+| Camera RAW decoding | [@wasmedia/wlibraw](https://gitlab.com/wasmedia/wlibraw) |
 | WebP encoding where the browser cannot | [@jsquash/webp](https://github.com/jamsinclair/jSquash) |
 | AVIF encoding | [@jsquash/avif](https://github.com/jamsinclair/jSquash) 2.1.1 |
 | JPEG XL encoding | [@jsquash/jxl](https://github.com/jamsinclair/jSquash) 1.3.0 |
@@ -35,6 +36,8 @@ are loaded on demand so the initial page stays small:
 | PDF output | [pdf-lib](https://pdf-lib.js.org) |
 | Zip download | [client-zip](https://github.com/Touffy/client-zip) |
 
+LibRaw, the RAW decoder behind @wasmedia/wlibraw, is LGPL-2.1/CDDL licensed and is only loaded when a RAW file is added.
+
 Very large images can exceed what a browser canvas will draw. The app probes
 that limit once at startup and, when a photo is over it, offers to convert at a
 reduced size instead of failing silently. JPEG XL output is also capped at 20 MP
@@ -42,7 +45,17 @@ reduced size instead of failing silently. JPEG XL output is also capped at 20 MP
 reduced-size offer.
 
 A few things are deliberately out of scope: inputs a browser cannot decode
-(RAW, PSD, and so on), animated output, and any server-side processing.
+(PSD and so on), animated output, and any server-side processing.
+
+## Third-party notices
+
+LibRaw (dual-licensed LGPL-2.1 or CDDL-1.0, <https://www.libraw.org>, source at
+<https://github.com/LibRaw/LibRaw>) is compiled to WebAssembly by
+[@wasmedia/wlibraw](https://gitlab.com/wasmedia/wlibraw) (LGPL-2.1) and is loaded
+as a separate, unmodified wasm file only when a RAW file is added. The wlibraw
+build also contains LittleCMS 2 (MIT), mozjpeg (IJG/BSD-style) and zlib-ng
+(zlib licence); their licence texts ship in
+`node_modules/@wasmedia/wlibraw/dist/licenses`.
 
 ## Requirements
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
   import type { Job } from '../queue.svelte';
-  import { JXL_MAX_PIXELS, OUTPUT_FORMATS, type OutputFormat } from '../formats';
+  import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, type OutputFormat } from '../formats';
   import { formatBytes, outputName } from '../names';
   import Icons from './Icons.svelte';
   let { job, format, onremove, ondownscale }: {
@@ -9,7 +9,12 @@
   } = $props();
   const label = $derived(OUTPUT_FORMATS.find(item => item.id === format)!.label);
   const name = $derived(outputName(job.name, format));
-  const kind = $derived(job.kind === 'unrecognized' ? '' : job.kind === 'webp' ? 'WebP' : job.kind.toUpperCase());
+  const rawTag = $derived.by(() => {
+    const dot = job.name.lastIndexOf('.');
+    return dot > 0 ? job.name.slice(dot + 1).toUpperCase() : 'RAW';
+  });
+  const kind = $derived(job.kind === 'unrecognized' ? '' : job.kind === 'webp' ? 'WebP'
+    : job.kind === 'raw' ? rawTag : job.kind.toUpperCase());
   const error = $derived.by(() => {
     switch (job.error?.code) {
       case 'unrecognized': return 'Not an image we can read';
@@ -18,7 +23,9 @@
       case 'too-large': return job.error.pixels && job.error.limit
         ? format === 'jxl' && job.error.limit === JXL_MAX_PIXELS
           ? `Too large for JPEG XL (${Math.round(job.error.pixels / 1e6)} MP, limit ${Math.round(job.error.limit / 1e6)} MP)`
-          : `Too large for this browser (${Math.round(job.error.pixels / 1e6)} MP, limit ${Math.round(job.error.limit / 1e6)} MP)`
+          : job.kind === 'raw' && job.error.limit === RAW_MAX_PIXELS
+            ? `Too large for RAW decoding (${Math.round(job.error.pixels / 1e6)} MP, limit ${Math.round(job.error.limit / 1e6)} MP)`
+            : `Too large for this browser (${Math.round(job.error.pixels / 1e6)} MP, limit ${Math.round(job.error.limit / 1e6)} MP)`
         : 'Too large for this browser';
       default: return '';
     }
@@ -41,7 +48,7 @@
       <div class="status-content" transition:crossfade>
         {#if job.status === 'done'}<span class="done"><Icons name="check" /> Done</span>
         {:else if job.status === 'converting'}
-          <span>{job.kind === 'heic' && job.phase === 'loading-codec' ? 'Loading HEIC decoder…' : 'Converting…'}</span>
+          <span>{job.kind === 'heic' && job.phase === 'loading-codec' ? 'Loading HEIC decoder…' : job.kind === 'raw' && job.phase === 'loading-codec' ? 'Loading RAW decoder…' : 'Converting…'}</span>
           <div class="track" aria-hidden="true"><span></span></div>
         {:else if job.status === 'queued'}Queued
         {:else}{error}{/if}
