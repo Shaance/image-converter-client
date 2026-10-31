@@ -1,5 +1,5 @@
 import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, type InputKind, type OutputFormat } from './formats';
-import { convertOnServer, serverEligible } from './server';
+import { convertOnServer, serverEligible, type ServerOutcome } from './server';
 
 export type ConversionError = {
   code: 'unrecognized' | 'too-large' | 'failed' | 'worker-lost';
@@ -11,6 +11,10 @@ export type ConvertRequest = {
   format: OutputFormat; maxArea: number | null; downscale: boolean; smaller: boolean;
   server: string | null;
 };
+// Sent by the queue when a job is invalidated while in flight; the worker aborts
+// that (id, attempt) and answers with a normal error so dispatch is released.
+export type CancelRequest = { type: 'cancel'; id: string; attempt: number };
+export type WorkerRequest = ConvertRequest | CancelRequest;
 export type WorkerResponse =
   | { type: 'phase'; id: string; attempt: number; phase: 'loading-codec' | 'converting' | 'waiting' }
   | { type: 'done'; id: string; attempt: number; blob: Blob; thumbnail?: Blob;
@@ -250,15 +254,27 @@ async function serverPreview(blob: Blob, request: ConvertRequest): Promise<{
   }
 }
 
-export async function convert(request: ConvertRequest, phase: Phase) {
+export async function convert(request: ConvertRequest, phase: Phase, signal?: AbortSignal) {
   // Server mode: eligible files are uploaded first; anything the server cannot
-  // do falls through to the on-device path below.
+  // do falls through to the on-device path below. A cancelled job (invalidated
+  // while in flight) throws instead: it must not fall back to on-device work.
   if (request.server && serverEligible(request.kind, request.format)) {
-    const outcome = await convertOnServer({
-      server: request.server, file: request.file, kind: request.kind,
-      format: request.format, phase,
-    });
-    if (!('fallback' in outcome)) {
+    let outcome: ServerOutcome;
+    try {
+      outcome = await convertOnServer({
+        server: request.server, file: request.file, kind: request.kind,
+        format: request.format, phase, signal,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw { code: 'failed' };
+      throw error;
+    }
+    if ('fallback' in outcome) {
+      if (signal?.aborted) throw { code: 'failed' };
+      // The server could not do it: continue on the device, and leave the
+      // "waiting for the server" phase behind right away.
+      phase('converting');
+    } else {
       const preview = await serverPreview(outcome.blob, request);
       return { blob: outcome.blob, ...preview, downscaled: false, where: 'server' as const };
     }

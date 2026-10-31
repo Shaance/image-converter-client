@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createQueue } from './queue.svelte';
 import { SERVER_URL } from './server';
-import type { ConvertRequest, WorkerResponse } from './pipeline';
+import type { CancelRequest, ConvertRequest, WorkerRequest, WorkerResponse } from './pipeline';
 
 class FakeWorker extends EventTarget {
   requests: ConvertRequest[] = [];
+  cancels: CancelRequest[] = [];
   terminated = false;
-  postMessage(message: ConvertRequest) { this.requests.push(message); }
+  postMessage(message: WorkerRequest) {
+    if (message.type === 'cancel') { this.cancels.push(message); return; }
+    this.requests.push(message);
+  }
   terminate() { this.terminated = true; }
   send(message: WorkerResponse) { this.dispatchEvent(new MessageEvent('message', { data: message })); }
   done(request = this.requests.at(-1)!, where: 'server' | 'device' = 'device', withThumbnail = true) {
@@ -295,5 +299,24 @@ describe('server mode', () => {
     expect(queue.jobs[0].status).toBe('done');
     expect(queue.jobs[0].result?.where).toBe('server');
     expect(queue.jobs[0].thumbnailUrl).toBeUndefined();
+  });
+  it('sends cancel for the in-flight job on setFormat, setMode, remove and clear', async () => {
+    await queue.add([file(), file('second.jpg')]); await turn();
+    const first = worker.requests[0];
+    queue.setFormat('png');
+    expect(worker.cancels).toEqual([{ type: 'cancel', id: first.id, attempt: first.attempt }]);
+    worker.done(first); await turn(); // the stale answer releases the dispatch
+    const second = worker.requests.at(-1)!;
+    queue.setMode('server');
+    expect(worker.cancels.at(-1)).toEqual({ type: 'cancel', id: second.id, attempt: second.attempt });
+    worker.done(second); await turn();
+    const third = worker.requests.at(-1)!;
+    queue.remove(third.id);
+    expect(worker.cancels.at(-1)).toEqual({ type: 'cancel', id: third.id, attempt: third.attempt });
+    worker.done(third); await turn();
+    await queue.add([file('third.jpg')]); await turn();
+    const fourth = worker.requests.at(-1)!;
+    queue.clear();
+    expect(worker.cancels.at(-1)).toEqual({ type: 'cancel', id: fourth.id, attempt: fourth.attempt });
   });
 });

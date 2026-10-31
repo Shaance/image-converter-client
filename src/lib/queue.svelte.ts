@@ -2,7 +2,7 @@ import { sniff, type InputKind, type OutputFormat } from './formats';
 import { outputName } from './names';
 import { buildZip } from './zip';
 import { SERVER_URL } from './server';
-import type { ConversionError, ConvertRequest, WorkerResponse } from './pipeline';
+import type { CancelRequest, ConversionError, ConvertRequest, WorkerRequest, WorkerResponse } from './pipeline';
 
 export type ConversionMode = 'device' | 'server';
 export type Job = {
@@ -79,6 +79,15 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     catch { workerLost(); }
   }
   function advance() { queueMicrotask(() => { dispatch(); prepareZip(); }); }
+  // Ask the worker to abort the in-flight job's server work (it then answers
+  // with a normal error for that id+attempt, which releases the dispatch; the
+  // stale response is ignored). inFlight is kept until that answer arrives so
+  // at most one job is ever dispatched.
+  function cancelInFlight() {
+    if (!inFlight) return;
+    const message: CancelRequest = { type: 'cancel', id: inFlight.id, attempt: inFlight.attempt };
+    try { worker.postMessage(message); } catch { /* a dead worker is handled by the error event */ }
+  }
   function workerLost() {
     workerStatus = { status: 'unavailable' };
     inFlight = undefined;
@@ -154,6 +163,7 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
   }
   function remove(id: string) {
     invalidateZip();
+    if (inFlight?.id === id) cancelInFlight();
     const job = jobs.find(job => job.id === id);
     if (job) dropResult(job, true);
     jobs = jobs.filter(job => job.id !== id);
@@ -162,6 +172,7 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
   }
   function clear() {
     invalidateZip();
+    cancelInFlight();
     jobs.forEach(job => dropResult(job, true));
     jobs = [];
     consent.clear();
@@ -169,6 +180,7 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
   // A fresh attempt for every job: results dropped, zip invalidated, consent cleared.
   function restartJobs() {
     invalidateZip();
+    cancelInFlight();
     consent.clear();
     for (const job of jobs) {
       dropResult(job);

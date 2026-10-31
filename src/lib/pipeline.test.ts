@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { convert, encode, type ConvertRequest } from './pipeline';
+import { convert, encode, type ConvertRequest, type WorkerRequest, type WorkerResponse } from './pipeline';
 import { SERVER_URL } from './server';
 
 vi.mock('pdf-lib', () => ({
@@ -120,7 +120,7 @@ beforeEach(() => {
     return bitmap;
   });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it('does not draw an oversized bitmap before consent and closes it', async () => {
   await expect(convert(request, () => {})).rejects.toEqual({ code: 'too-large', pixels: 64, limit: 16 });
@@ -561,5 +561,48 @@ describe('server mode', () => {
     const result = await convert({ ...request, maxArea: null }, () => {});
     expect(result.where).toBe('device');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('emits converting before the on-device path when the server falls back', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
+    const phases: string[] = [];
+    const result = await convert({ ...request, server: SERVER_URL, format: 'jxl', maxArea: null }, p => phases.push(p));
+    expect(result.where).toBe('device');
+    // server attempt, the fallback marker, the decode, then the JXL codec phases
+    expect(phases).toEqual(['converting', 'converting', 'converting', 'loading-codec', 'converting']);
+  });
+  it('a cancelled job throws failed and never runs the on-device path', async () => {
+    const controller = new AbortController();
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+    }));
+    const promise = convert({ ...request, server: SERVER_URL, maxArea: null }, () => {}, controller.signal);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the upload started
+    controller.abort();
+    await expect(promise).rejects.toEqual({ code: 'failed' });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // never uploads again
+    expect(canvases).toEqual([]); // no on-device encode ran
+  });
+});
+
+describe('worker cancellation', () => {
+  it('aborts an in-flight upload on cancel and answers with a failed error', async () => {
+    vi.useFakeTimers();
+    const workerFetch = vi.fn().mockResolvedValueOnce(
+      new Response(null, { status: 429, headers: { 'retry-after': '30' } }));
+    vi.stubGlobal('fetch', workerFetch);
+    const posted: WorkerResponse[] = [];
+    const scope = { postMessage: (message: WorkerResponse) => { posted.push(message); }, onmessage: null as unknown };
+    vi.stubGlobal('self', scope);
+    vi.resetModules();
+    await import('./pipeline.worker');
+    const onmessage = scope.onmessage as (event: { data: WorkerRequest }) => void;
+    const convertRequest: ConvertRequest = { ...request, server: SERVER_URL, maxArea: null, kind: 'jpeg', format: 'png' };
+    onmessage({ data: convertRequest });
+    await vi.advanceTimersByTimeAsync(1); // 429 answered, backoff sleep entered
+    expect(workerFetch).toHaveBeenCalledTimes(1);
+    onmessage({ data: { type: 'cancel', id: convertRequest.id, attempt: convertRequest.attempt } });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(workerFetch).toHaveBeenCalledTimes(1); // no further upload after the cancel
+    expect(posted).toContainEqual({ type: 'error', id: convertRequest.id, attempt: convertRequest.attempt, code: 'failed' });
   });
 });

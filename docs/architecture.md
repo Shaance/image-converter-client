@@ -139,8 +139,9 @@ Transitions:
 - converting → done | failed | awaiting-downscale.
 - awaiting-downscale + consent → queued with `downscale: true` for that attempt.
   A format change resets consent (fresh attempt, may ask again).
-- setFormat(f) → every non-removed job gets a new `attempt` number and returns to
-  queued; results, thumbnails stay, result URLs are revoked.
+- setFormat(f) → sends `cancel` for the in-flight job, then every non-removed job
+  gets a new `attempt` number and returns to queued; results, thumbnails stay,
+  result URLs are revoked.
 - setMode(m) → records the mode and restarts every job exactly like setFormat
   (the dispatch then sends `server: SERVER_URL` in server mode, `null` otherwise).
   The mode is never written to localStorage.
@@ -216,6 +217,14 @@ Rules:
 - Worker protocol (no RPC library):
   in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale, smaller, server }`
   (`server` is the imagor base URL in server mode, `null` in device mode)
+  and `{ type: 'cancel', id, attempt }` — sent by the queue whenever the in-flight
+  job is invalidated (setFormat, setMode, the setSmaller restart, remove, clear).
+  The worker keeps one AbortController per in-flight (id, attempt); `cancel` aborts
+  it, the server path stops uploading immediately (fetch and backoff sleep both
+  honour the signal), the job never falls back to on-device work, and the worker
+  answers with a normal `{ type: 'error', code: 'failed' }` for that (id, attempt)
+  so the queue's one-at-a-time dispatch is released (the stale answer is ignored).
+  On-device conversion itself is not cancellable.
   out `{ type: 'phase', id, attempt, phase: 'loading-codec' | 'converting' | 'waiting' }`,
   `{ type: 'done', id, attempt, blob, thumbnail?, width, height, downscaled, where: 'server' | 'device' }`
   (`thumbnail` is absent when neither the server result nor the source decodes in
@@ -253,15 +262,20 @@ Rules:
   within its 30 s request timeout), 429 and 503 set phase `waiting` and retry: the
   wait is `Retry-After` (seconds or HTTP-date) when present, else exponential
   backoff with full jitter starting at 1 s, doubling, capped at 15 s per wait,
-  floored at 1 ms. The budget is 90 s of wall-clock time per file, counted from the
-  first attempt via `Date.now()` (request time included, so repeated 30 s 408s
-  cannot stretch it): when the next wait would push elapsed past 90 s, or a new
-  attempt would start at elapsed ≥ 90 s, the job falls back. Any other status, a
-  timeout, or a network/CORS error falls back
-  immediately. Falling back runs the existing on-device `convert()` for the same
+  floored at 1 ms. The budget is a strict 90 s of wall-clock time per file,
+  counted from the first attempt via `Date.now()`: each attempt's timeout is
+  `min(60 s, remaining budget)`, no attempt starts with less than 1 s remaining,
+  and when the next wait would push elapsed past 90 s the job falls back — so a
+  file always leaves the server path within 90 s, no matter how the server
+  answers (repeated 30 s 408s included). Any other status, a timeout, or a
+  network/CORS error falls back
+  immediately. Falling back emits phase `converting` first (a row never stays on
+  "Waiting for the server…" during local decoding) and then runs the existing
+  on-device `convert()` for the same
   file and reports `where: 'device'`, so the too-large/downscale journey, RAW and
   "Smaller files" behave exactly as in device mode; a stuck server can never stall
-  the batch for more than about 90 s plus one 60 s request per file.
+  the batch: a file leaves the server path within 90 s and then converts on the
+  device.
   Thumbnail/dimensions for a server result are best effort: decode the result blob
   with `createImageBitmap`, else decode the source file, else no thumbnail and
   width/height 0; `downscaled` is false for server results. The server strips

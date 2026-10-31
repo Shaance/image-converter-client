@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { convertOnServer, SERVER_URL, serverEligible, serverPath } from './server';
+import { convertOnServer, SERVER_URL, serverEligible, serverPath, type ServerOutcome } from './server';
 import type { InputKind, OutputFormat } from './formats';
 
 // A file whose File.type deliberately disagrees with the sniffed kind, like an
@@ -13,13 +13,14 @@ const status = (code: number, headers: Record<string, string> = {}) =>
 let fetchMock: ReturnType<typeof vi.fn>;
 let phases: string[];
 const phase = (p: 'waiting' | 'converting') => { phases.push(p); };
-const call = (over: { kind?: InputKind; format?: OutputFormat; server?: string; f?: File } = {}) =>
+const call = (over: { kind?: InputKind; format?: OutputFormat; server?: string; f?: File; signal?: AbortSignal } = {}) =>
   convertOnServer({
     server: over.server ?? SERVER_URL,
     file: over.f ?? file(),
     kind: over.kind ?? 'jpeg',
     format: over.format ?? 'png',
     phase,
+    signal: over.signal,
   });
 
 beforeEach(() => {
@@ -181,17 +182,22 @@ describe('retry and fallback', () => {
   it('falls back once 90 s of wall-clock time have passed against a server that answers 408 only after a 30 s delay', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(1); // deterministic backoff: 1 s, 2 s, 4 s, ...
-    fetchMock.mockImplementation(async () => {
+    const times: number[] = [];
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
+      times.push(Date.now());
       // imagor holds a queued request for its 30 s request timeout, then answers 408.
-      await new Promise(resolve => setTimeout(resolve, 30_000));
-      return status(408);
-    });
-    const promise = call();
+      const timer = setTimeout(() => resolve(status(408)), 30_000);
+      init?.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(init.signal!.reason); }, { once: true });
+    }));
+    let doneAt = -1;
+    const promise = call().then(result => { doneAt = Date.now(); return result; });
     await vi.advanceTimersByTimeAsync(400_000);
     expect(await promise).toEqual({ fallback: true });
-    // Attempts at t=0, 31 s, 63 s; the fourth would start past the 90 s budget.
+    // Attempts at t=0, 31 s, 63 s; the third is aborted by its budget-capped
+    // timeout at exactly t=90 s.
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(doneAt - times[0]).toBeLessThanOrEqual(90_000); // strict wall-clock budget
     expect(phases.filter(p => p === 'waiting')).toHaveLength(2);
   });
   it.each([413, 406, 415, 422, 500, 502])('falls back immediately on %s without retrying', async code => {
@@ -200,9 +206,44 @@ describe('retry and fallback', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(phases).toEqual(['converting']);
   });
-  it('falls back on a request timeout', async () => {
-    fetchMock.mockRejectedValue(new DOMException('The operation timed out', 'TimeoutError'));
-    expect(await call()).toEqual({ fallback: true });
+  it('falls back exactly when the 60 s per-attempt timeout fires', async () => {
+    vi.useFakeTimers();
+    // The mocked fetch stays pending until its own signal aborts.
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+    }));
+    let settled: ServerOutcome | undefined;
+    const promise = call().then(result => { settled = result; });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(settled).toBeUndefined(); // still waiting one tick before the deadline
+    await vi.advanceTimersByTimeAsync(1);
+    await promise;
+    expect(settled).toEqual({ fallback: true }); // aborted at the 60 s deadline
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('a cancel during the backoff sleep throws without any further fetch', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    fetchMock.mockResolvedValueOnce(status(429, { 'retry-after': '30' }));
+    const promise = call({ signal: controller.signal });
+    await vi.advanceTimersByTimeAsync(1); // first attempt answered 429, now sleeping
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(phases).toEqual(['converting', 'waiting']);
+    controller.abort();
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(120_000); // never uploads again
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('a cancel during the fetch aborts it and throws instead of falling back', async () => {
+    const controller = new AbortController();
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+    }));
+    const promise = call({ signal: controller.signal });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the upload started
+    controller.abort();
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it('falls back on a network/CORS error', async () => {
