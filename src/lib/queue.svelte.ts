@@ -1,15 +1,17 @@
 import { sniff, type InputKind, type OutputFormat } from './formats';
 import { outputName } from './names';
 import { buildZip } from './zip';
+import { SERVER_URL } from './server';
 import type { ConversionError, ConvertRequest, WorkerResponse } from './pipeline';
 
+export type ConversionMode = 'device' | 'server';
 export type Job = {
   id: string; attempt: number; file: File; name: string; bytes: number;
   kind: InputKind | 'unrecognized';
   status: 'queued' | 'converting' | 'done' | 'failed' | 'awaiting-downscale';
-  phase?: 'loading-codec' | 'converting';
+  phase?: 'loading-codec' | 'converting' | 'waiting';
   thumbnailUrl?: string;
-  result?: { blob: Blob; url: string; bytes: number; width: number; height: number; downscaled: boolean };
+  result?: { blob: Blob; url: string; bytes: number; width: number; height: number; downscaled: boolean; where: 'server' | 'device' };
   error?: ConversionError;
 };
 export type ZipState = { status: 'idle' | 'preparing' | 'ready'; url?: string };
@@ -18,6 +20,9 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
   let jobs = $state<Job[]>([]);
   let format = $state<OutputFormat>('jpeg');
   let smaller = $state(false);
+  // Server mode is a per-session choice only: never persisted, so it is off
+  // on every page load.
+  let mode = $state<ConversionMode>('device');
   let zip = $state<ZipState>({ status: 'idle' });
   let workerStatus = $state<{ status: 'starting' | 'ready' | 'unavailable' }>({ status: 'starting' });
   const fileCount = $derived(jobs.length);
@@ -68,7 +73,8 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     job.status = 'converting'; job.phase = undefined;
     inFlight = { id: job.id, attempt: job.attempt };
     const message: ConvertRequest = { type: 'convert', ...inFlight, file: job.file,
-      kind: job.kind as InputKind, format, maxArea, downscale: consent.has(job.id), smaller };
+      kind: job.kind as InputKind, format, maxArea, downscale: consent.has(job.id), smaller,
+      server: mode === 'server' ? SERVER_URL : null };
     try { worker.postMessage(message); }
     catch { workerLost(); }
   }
@@ -91,7 +97,12 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     if (data.type === 'phase') {
       // A phase only moves forward within an attempt: an output encoder's
       // loading-codec must not overwrite the converting phase a decode reported.
-      if (job && !(data.phase === 'loading-codec' && job.phase === 'converting')) job.phase = data.phase;
+      // 'waiting' (server busy) may interleave with 'converting'.
+      const rank = { 'loading-codec': 0, waiting: 1, converting: 2 } as const;
+      const current = job?.phase;
+      const forward = current === undefined || rank[data.phase] >= rank[current]
+        || (current !== 'loading-codec' && data.phase !== 'loading-codec');
+      if (job && forward) job.phase = data.phase;
       return;
     }
     inFlight = undefined;
@@ -100,8 +111,8 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
       if (data.type === 'done') {
         dropResult(job, true);
         job.result = { blob: data.blob, url: URL.createObjectURL(data.blob), bytes: data.blob.size,
-          width: data.width, height: data.height, downscaled: data.downscaled };
-        job.thumbnailUrl = URL.createObjectURL(data.thumbnail);
+          width: data.width, height: data.height, downscaled: data.downscaled, where: data.where };
+        if (data.thumbnail) job.thumbnailUrl = URL.createObjectURL(data.thumbnail);
         job.status = 'done'; job.error = undefined;
       } else {
         job.error = { code: data.code, pixels: data.pixels, limit: data.limit };
@@ -176,6 +187,11 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     format = id;
     restartJobs();
   }
+  function setMode(next: ConversionMode) {
+    if (next === mode) return;
+    mode = next;
+    restartJobs();
+  }
   function setSmaller(on: boolean) {
     if (on === smaller) return;
     smaller = on;
@@ -201,10 +217,11 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
   }
   return {
     get jobs() { return jobs; }, get format() { return format; }, get smaller() { return smaller; },
+    get mode() { return mode; },
     get zip() { return zip; },
     get workerStatus() { return workerStatus; }, get fileCount() { return fileCount; },
     get bytesIn() { return bytesIn; }, get bytesOut() { return bytesOut; },
     get doneCount() { return doneCount; }, get failedCount() { return failedCount; },
-    get settled() { return settled; }, add, remove, clear, setFormat, setSmaller, convertDownscaled, dispose,
+    get settled() { return settled; }, add, remove, clear, setFormat, setMode, setSmaller, convertDownscaled, dispose,
   };
 }

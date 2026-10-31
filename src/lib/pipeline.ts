@@ -1,4 +1,5 @@
 import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, type InputKind, type OutputFormat } from './formats';
+import { convertOnServer, serverEligible } from './server';
 
 export type ConversionError = {
   code: 'unrecognized' | 'too-large' | 'failed' | 'worker-lost';
@@ -8,15 +9,16 @@ export type ConversionError = {
 export type ConvertRequest = {
   type: 'convert'; id: string; attempt: number; file: File; kind: InputKind;
   format: OutputFormat; maxArea: number | null; downscale: boolean; smaller: boolean;
+  server: string | null;
 };
 export type WorkerResponse =
-  | { type: 'phase'; id: string; attempt: number; phase: 'loading-codec' | 'converting' }
-  | { type: 'done'; id: string; attempt: number; blob: Blob; thumbnail: Blob;
-      width: number; height: number; downscaled: boolean }
+  | { type: 'phase'; id: string; attempt: number; phase: 'loading-codec' | 'converting' | 'waiting' }
+  | { type: 'done'; id: string; attempt: number; blob: Blob; thumbnail?: Blob;
+      width: number; height: number; downscaled: boolean; where: 'server' | 'device' }
   | ({ type: 'error'; id: string; attempt: number } & ConversionError);
 
 type Fit = { width: number; height: number };
-type Phase = (phase: 'loading-codec' | 'converting') => void;
+type Phase = (phase: 'loading-codec' | 'converting' | 'waiting') => void;
 
 const AVIF_ENCODE_OPTIONS = { quality: 50, speed: 6 };
 const JXL_ENCODE_OPTIONS = { quality: 75, effort: 5 };
@@ -222,7 +224,45 @@ export async function thumbnail(bitmap: ImageBitmap): Promise<Blob> {
   }
 }
 
+// Thumbnail and dimensions for a server result are best effort: decode the
+// result blob when the browser can (JXL/TIFF often cannot), else the source
+// file, else report no thumbnail and 0x0.
+async function serverPreview(blob: Blob, request: ConvertRequest): Promise<{
+  thumbnail?: Blob; width: number; height: number;
+}> {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    try {
+      return { thumbnail: await thumbnail(bitmap), width: bitmap.width, height: bitmap.height };
+    } finally {
+      bitmap.close();
+    }
+  } catch { /* The result format may not decode in this browser. */ }
+  try {
+    const source = await decode(request.file, request.kind);
+    try {
+      return { thumbnail: await thumbnail(source), width: source.width, height: source.height };
+    } finally {
+      source.close();
+    }
+  } catch {
+    return { width: 0, height: 0 };
+  }
+}
+
 export async function convert(request: ConvertRequest, phase: Phase) {
+  // Server mode: eligible files are uploaded first; anything the server cannot
+  // do falls through to the on-device path below.
+  if (request.server && serverEligible(request.kind, request.format)) {
+    const outcome = await convertOnServer({
+      server: request.server, file: request.file, kind: request.kind,
+      format: request.format, phase,
+    });
+    if (!('fallback' in outcome)) {
+      const preview = await serverPreview(outcome.blob, request);
+      return { blob: outcome.blob, ...preview, downscaled: false, where: 'server' as const };
+    }
+  }
   let maxArea = request.maxArea;
   if (request.format === 'jxl') maxArea = Math.min(maxArea ?? JXL_MAX_PIXELS, JXL_MAX_PIXELS);
   if (request.kind === 'raw') maxArea = Math.min(maxArea ?? RAW_MAX_PIXELS, RAW_MAX_PIXELS);
@@ -265,7 +305,7 @@ export async function convert(request: ConvertRequest, phase: Phase) {
     }
     const blob = await encode(bitmap, request.format, phase, request.smaller);
     const preview = await thumbnail(bitmap);
-    return { blob, thumbnail: preview, width: bitmap.width, height: bitmap.height, downscaled };
+    return { blob, thumbnail: preview, width: bitmap.width, height: bitmap.height, downscaled, where: 'device' as const };
   } catch (error) {
     // A RAW oversize is known from the file metadata before any bitmap exists.
     if (pixels === undefined && typeof error === 'object' && error !== null

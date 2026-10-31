@@ -46,13 +46,13 @@
         {:else if queue.failedCount}{queue.doneCount} ready · {queue.failedCount} need attention
         {:else}{formatBytes(queue.bytesIn)} → {formatBytes(queue.bytesOut)} · all done{/if}</span>
     </div>
-    <div class="formats"><span class="label">To</span><FormatChips value={queue.format} onchange={queue.setFormat} smaller={queue.smaller} onsmaller={queue.setSmaller} compact /></div>
+    <div class="formats"><span class="label">To</span><FormatChips value={queue.format} onchange={queue.setFormat} smaller={queue.smaller} onsmaller={queue.setSmaller} server={queue.mode === 'server'} compact /></div>
     <button class="clear" onclick={onclear}>Clear all</button>
   </div>
   <ul bind:this={list}>
     {#each queue.jobs as job (job.id)}
       <li data-job={job.id} use:insertion out:removal>
-        <FileRow {job} format={queue.format} onremove={() => remove(job.id)} ondownscale={() => queue.convertDownscaled(job.id)} />
+        <FileRow {job} format={queue.format} server={queue.mode === 'server'} onremove={() => remove(job.id)} ondownscale={() => queue.convertDownscaled(job.id)} />
       </li>
     {/each}
   </ul>

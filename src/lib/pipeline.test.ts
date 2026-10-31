@@ -1,5 +1,14 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { convert, encode, type ConvertRequest } from './pipeline';
+import { SERVER_URL } from './server';
+
+vi.mock('pdf-lib', () => ({
+  PDFDocument: { create: vi.fn(async () => ({
+    embedJpg: vi.fn(async () => ({})),
+    addPage: vi.fn(() => ({ drawImage: vi.fn() })),
+    save: vi.fn(async () => new Uint8Array([37, 80, 68, 70])),
+  })) },
+}));
 
 vi.mock('@jsquash/webp/encode.js', () => ({
   default: async () => new TextEncoder().encode('fallback WebP').buffer,
@@ -88,7 +97,8 @@ class FakeCanvas {
   }
 }
 const request: ConvertRequest = { type: 'convert', id: 'one', attempt: 0,
-  file: new File(['image'], 'image.jpg'), kind: 'jpeg', format: 'png', maxArea: 16, downscale: false, smaller: false };
+  file: new File(['image'], 'image.jpg'), kind: 'jpeg', format: 'png', maxArea: 16, downscale: false, smaller: false,
+  server: null };
 beforeEach(() => {
   canvases = []; bitmaps = []; bitmapCalls = []; nativeMime = 'image/webp'; encodeFailure = false; contextFails = false;
   jsquash.avif.init.mockClear(); jsquash.avif.encode.mockClear();
@@ -121,7 +131,7 @@ it('re-decodes to fit after consent and releases both bitmaps and every canvas',
   const result = await convert({ ...request, downscale: true }, () => {});
   expect(result).toMatchObject({ width: 4, height: 4, downscaled: true });
   expect(result.blob.type).toBe('image/png');
-  expect(result.thumbnail.type).toBe('image/jpeg');
+  expect(result.thumbnail?.type).toBe('image/jpeg');
   expect(bitmaps.map(b => [b.width, b.closed])).toEqual([[8, true], [4, true]]);
   expect(canvases.map(c => [c.width, c.height])).toEqual([[0, 0], [0, 0]]);
 });
@@ -501,4 +511,55 @@ it('maps any other RAW failure to failed and creates a fresh instance for the ne
   const result = await convert(rawRequest(), () => {});
   expect(result.width).toBe(6000);
   expect(wlibraw.inits).toBe(2); // no wlibraw instance is kept between files
+});
+
+describe('server mode', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  const serverRequest = (over: Partial<ConvertRequest> = {}): ConvertRequest => ({
+    ...request, server: SERVER_URL, maxArea: null, ...over,
+  });
+  it('returns the server blob with where server for an eligible job', async () => {
+    fetchMock.mockResolvedValue(new Response(new Blob(['server bytes'], { type: 'image/png' }), { status: 200 }));
+    const phases: string[] = [];
+    const result = await convert(serverRequest({ format: 'png' }), p => phases.push(p));
+    expect(result.where).toBe('server');
+    expect(result.blob.type).toBe('image/png');
+    expect(await result.blob.text()).toBe('server bytes');
+    expect(result.downscaled).toBe(false);
+    // Thumbnail/dimensions come from decoding the server result (stubbed bitmap is 8x8).
+    expect(result).toMatchObject({ width: 8, height: 8 });
+    expect(result.thumbnail?.type).toBe('image/jpeg');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(`${SERVER_URL}/unsafe/filters:format(png)/`);
+    expect(phases).toEqual(['converting']);
+  });
+  it('falls back to the on-device convert when the server errors', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
+    const result = await convert(serverRequest({ format: 'png' }), () => {});
+    expect(result.where).toBe('device');
+    expect(result.blob.type).toBe('image/png');
+    expect(await result.blob.text()).toBe('native');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(['bmp', 'raw'] as const)('never uploads %s input', async kind => {
+    const req = kind === 'raw' ? rawRequest({ server: SERVER_URL }) : serverRequest({ kind });
+    const result = await convert(req, () => {});
+    expect(result.where).toBe('device');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('never uploads pdf output', async () => {
+    const result = await convert(serverRequest({ format: 'pdf' }), () => {});
+    expect(result.where).toBe('device');
+    expect(result.blob.type).toBe('application/pdf');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('never uploads in device mode', async () => {
+    const result = await convert({ ...request, maxArea: null }, () => {});
+    expect(result.where).toBe('device');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,10 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  /** Imagor server base URL for Server mode; no trailing slash. */
+  readonly VITE_SERVER_URL?: string;
+}
+
 declare module 'canvas-size' {
   const canvasSize: {
     maxArea(options: { usePromise: boolean; useWorker: boolean }):

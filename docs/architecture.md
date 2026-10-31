@@ -7,8 +7,11 @@ wins; the overrides are listed under "Mock overrides".
 ## Goal
 
 A single-page web app at images.hashcode.dev that converts photos in the browser.
-No upload, no account, no tracking. A "Server" mode is shown but disabled
-("coming back soon") until the backend is rebuilt.
+No account, no tracking. A mode switch offers "On device" (the default, files never
+leave the device) and "Server" (each file is uploaded one at a time to an imagor
+server at convert.hashcode.dev, which converts it and deletes it right away;
+anything the server cannot do falls back to on-device conversion). Server mode is
+a per-session choice and is always off on page load.
 
 ## Product decisions
 
@@ -78,8 +81,12 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
   mitigated in this build: very large batches on a phone can exhaust memory
   (results are kept as Blobs, the zip is a second copy). Copy never promises "any
   size, any number".
-- Files never leave the device. Codec chunks and Google Fonts still load from the
-  network; no file bytes are ever sent anywhere.
+- Files never leave the device in the default "On device" mode. Codec chunks and
+  Google Fonts still load from the network; no file bytes are ever sent anywhere.
+  In "Server" mode each eligible file is uploaded once to the configured imagor
+  server (see "Server mode" under Rules), converted there and deleted by the
+  server immediately after responding; RAW/BMP inputs and PDF output always
+  convert on the device.
 
 ## Journey
 
@@ -107,14 +114,15 @@ No upload, no account, no tracking. A "Server" mode is shown but disabled
 ## State model (`queue.svelte.ts` is the only state owner)
 
 Job: `{ id, attempt, file, name, bytes, kind: InputKind | 'unrecognized', status,
-phase?: 'loading-codec' | 'converting' (set from worker phase messages while converting, cleared on settle),
-thumbnailUrl?, result?: { blob, url, bytes, width, height, downscaled },
+phase?: 'loading-codec' | 'converting' | 'waiting' (set from worker phase messages while converting, cleared on settle),
+thumbnailUrl?, result?: { blob, url, bytes, width, height, downscaled, where: 'server' | 'device' },
 error?: { code, pixels?, limit? } }`
 
 Statuses: `queued`, `converting`, `done`, `failed`, `awaiting-downscale`.
 
-Queue-level settings: `format` (default `'jpeg'`) and `smaller` (default `false`,
-the "Smaller files" toggle; not persisted).
+Queue-level settings: `format` (default `'jpeg'`), `smaller` (default `false`,
+the "Smaller files" toggle; not persisted), and `mode` (`'device' | 'server'`,
+default `'device'`; never persisted, so Server mode is off on every page load).
 
 Error codes: `unrecognized` (sniff failed or zero bytes: "Not an image we can
 read"), `too-large` (with pixels and limit; limit absent when the probe failed),
@@ -133,6 +141,9 @@ Transitions:
   A format change resets consent (fresh attempt, may ask again).
 - setFormat(f) → every non-removed job gets a new `attempt` number and returns to
   queued; results, thumbnails stay, result URLs are revoked.
+- setMode(m) → records the mode and restarts every job exactly like setFormat
+  (the dispatch then sends `server: SERVER_URL` in server mode, `null` otherwise).
+  The mode is never written to localStorage.
 - setSmaller(on) → records the value; when the selected format is `jpeg` or `png`
   it restarts every job exactly like setFormat (new attempt, results dropped, zip
   invalidated, consent cleared), on any other format jobs are untouched.
@@ -163,7 +174,8 @@ src/
     formats.ts            OUTPUT_FORMATS table (id, label, mime, extension), sniff(bytes) → InputKind | null
     names.ts              outputName(inputName, format), uniqueNames(names) for the zip, formatBytes
     capabilities.ts       supported(): boolean; probeMaxArea(): Promise<number | null> (canvas-size, main thread)
-    pipeline.ts           worker-side processing: decode(file, kind, fitTo?) → ImageBitmap, encode(bitmap, format, smaller?) → Blob, thumbnail(bitmap) → Blob
+    pipeline.ts           worker-side processing: decode(file, kind, fitTo?) → ImageBitmap, encode(bitmap, format, smaller?) → Blob, thumbnail(bitmap) → Blob; convert() tries the server first when the request carries one
+    server.ts             the imagor HTTP contract: SERVER_URL config, eligibility, upload with backoff, fallback signal (called from pipeline.ts, never the other way round)
     pipeline.worker.ts    module worker: message loop around pipeline.ts, lazy codec imports
     queue.svelte.ts       the state above; owns the Worker instance and the zip
     zip.ts                buildZip(rows) → Blob via client-zip
@@ -202,11 +214,17 @@ Rules:
   TIFF) makes LibRaw fail with LIBRAW_FILE_UNSUPPORTED; that surfaces as
   `unrecognized` ("Not an image we can read"), any other RAW failure as `failed`.
 - Worker protocol (no RPC library):
-  in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale, smaller }`
-  out `{ type: 'phase', id, attempt, phase: 'loading-codec' | 'converting' }`,
-  `{ type: 'done', id, attempt, blob, thumbnail, width, height, downscaled }`,
+  in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale, smaller, server }`
+  (`server` is the imagor base URL in server mode, `null` in device mode)
+  out `{ type: 'phase', id, attempt, phase: 'loading-codec' | 'converting' | 'waiting' }`,
+  `{ type: 'done', id, attempt, blob, thumbnail?, width, height, downscaled, where: 'server' | 'device' }`
+  (`thumbnail` is absent when neither the server result nor the source decodes in
+  this browser; `where` records where the conversion ran),
   `{ type: 'error', id, attempt, code, pixels?, limit? }`.
-  The queue dispatches the next job only after the previous one settles.
+  The queue dispatches the next job only after the previous one settles, so at most
+  one file is uploaded at a time. A phase only moves forward within an attempt
+  (`loading-codec` → `converting`), except that `waiting` (server busy) may
+  interleave with `converting`.
 - Vite: `new Worker(new URL('./pipeline.worker.ts', import.meta.url), { type: 'module' })`,
   `worker: { format: 'es' }`,
   `optimizeDeps: { exclude: ['@jsquash/webp', '@jsquash/avif', '@jsquash/jxl', '@jsquash/jpeg', '@jsquash/oxipng', '@wasmedia/wlibraw'] }`.
@@ -216,9 +234,48 @@ Rules:
 - Names: output = input stem + new extension, Unicode preserved, path separators
   stripped, extensionless names get the extension appended. Inside the zip,
   collisions get ` (2)`, ` (3)` against the full set of already reserved names.
-- Server mode: the mode switch is a native radio group whose "Server" option is
-  disabled (`disabled` attribute, plus the "coming back soon" tag in its label).
-  Nothing else exists for it. No interface, no stub.
+- Server mode (`src/lib/server.ts`, called from `convert()` in pipeline.ts):
+  `SERVER_URL` comes from `VITE_SERVER_URL`, default `https://convert.hashcode.dev`,
+  trailing slashes stripped. A job is eligible when the request carries a server
+  AND the sniffed kind is jpeg/png/webp/gif/avif/heic AND the output is
+  jpeg/png/webp/avif/jxl/gif/tiff; RAW/BMP inputs and PDF output always convert on
+  the device. Eligible jobs are uploaded one at a time (the queue already dispatches
+  one job at a time) with `POST {SERVER_URL}/unsafe/filters:format(<fmt>)/` or
+  `POST {SERVER_URL}/unsafe/filters:format(<fmt>):quality(<q>)/` (qualities: jpeg 90,
+  webp 85, avif 50, jxl 75; png/gif/tiff send none), body multipart/form-data with a
+  single `image` field whose Blob type is the sniffed kind's image/* MIME — never
+  `File.type`, which iOS mislabels and the server rejects with 406. Fetch uses
+  `credentials: 'omit'`, `mode: 'cors'`, `referrerPolicy: 'no-referrer'`,
+  `cache: 'no-store'` and a 60 s per-attempt timeout (`AbortSignal.timeout`); no
+  credentials or cookies are ever sent. A 200 returns the response blob retyped with
+  the output MIME (a failed body read — dropped connection, timeout mid-read —
+  falls back too). 408 (imagor answers 408 when a queued request has not started
+  within its 30 s request timeout), 429 and 503 set phase `waiting` and retry: the
+  wait is `Retry-After` (seconds or HTTP-date) when present, else exponential
+  backoff with full jitter starting at 1 s, doubling, capped at 15 s per wait,
+  floored at 1 ms. The budget is 90 s of wall-clock time per file, counted from the
+  first attempt via `Date.now()` (request time included, so repeated 30 s 408s
+  cannot stretch it): when the next wait would push elapsed past 90 s, or a new
+  attempt would start at elapsed ≥ 90 s, the job falls back. Any other status, a
+  timeout, or a network/CORS error falls back
+  immediately. Falling back runs the existing on-device `convert()` for the same
+  file and reports `where: 'device'`, so the too-large/downscale journey, RAW and
+  "Smaller files" behave exactly as in device mode; a stuck server can never stall
+  the batch for more than about 90 s plus one 60 s request per file.
+  Thumbnail/dimensions for a server result are best effort: decode the result blob
+  with `createImageBitmap`, else decode the source file, else no thumbnail and
+  width/height 0; `downscaled` is false for server results. The server strips
+  metadata, stores nothing and deletes everything after responding; CORS allows only
+  the site origin.
+- Privacy copy: while Server mode is on, the hero, the line under the mode switch
+  ("Photos are uploaded to <host>, converted, and deleted right away.") and the
+  footer ("No accounts, no tracking. Server mode uploads each photo for conversion
+  only.") must never claim files stay on the device; in device mode the copy is
+  unchanged ("No uploads, no accounts, no tracking."). The "Smaller files" checkbox
+  is hidden in Server mode (MozJPEG/OxiPNG are on-device only) but its value is
+  kept for when the user switches back. A done row that fell back shows
+  "· on this device" in its meta line; a `waiting` phase reads "Waiting for the
+  server…".
 - The file input `accept` lists `image/*,.heic,.heif,image/heic,image/heif` plus
   the RAW extensions `.dng,.cr2,.cr3,.nef,.arw,.raf,.orf,.rw2,.pef,.srw,.iiq,image/x-adobe-dng`
   so iOS hands over HEIC originals instead of transcoding and pickers on all
@@ -228,7 +285,8 @@ Rules:
 
 Native controls only: `<button>`, `<input type="file">` behind a `<label>` drop
 zone, a `role="radiogroup"` of format chips (`aria-checked`, arrow keys), the mode
-switch as a radio group with the Server option `disabled`. Remove buttons are
+switch as a real radio group with both options enabled (disabled only until the
+queue exists). Remove buttons are
 labelled "Remove IMG_4821.HEIC", download links "Download IMG_4821.jpg". The header
 count line is `aria-live="polite"`; rows are not announced individually. Visible
 focus rings (2px teal outline, 2px offset) everywhere. Status is always text, never
@@ -288,7 +346,11 @@ is reserved for disabled states.
 
 - `npm run check`, `npm run build`, `npm test` (vitest: sniff on real header
   bytes, output naming and zip de-duplication, queue transitions including the
-  format-switch race and ignored stale results).
+  format-switch race and ignored stale results, the server module with a mocked
+  fetch — request shape, MIME from the sniffed kind, Retry-After and jittered
+  backoff within the 90 s budget, immediate fallback on other statuses, timeouts
+  and network errors — and server-mode convert/queue behaviour: `where`,
+  `server` field, `waiting` phase, optional thumbnail).
 - Built site (`vite preview`), Chromium and Safari, plus iOS Simulator Safari:
   each of the eight outputs from a JPEG, HEIC → JPEG, PNG with alpha → JPEG/PNG,
   the "Smaller files" toggle off and on for JPEG and PNG (MozJPEG/OxiPNG chunks
@@ -301,5 +363,16 @@ is reserved for disabled states.
   a .mov dropped in, remove in flight,
   format switch mid-batch, Download all, dark mode, 390 px width, reduced motion,
   keyboard-only run. Lazy codec chunk requests observed in the network panel.
+- Server mode against a real imagor behind the planned Traefik config: a JPEG →
+  each server output (jpeg/png/webp/avif/jxl/gif/tiff) with the right
+  `filters:format(...):quality(...)` path and an image/* part MIME, 200 → done row
+  without "· on this device"; a 408/429/503 with Retry-After shows "Waiting for the
+  server…" then retries, and a server that only ever answers 408 after its 30 s
+  request timeout falls back within the 90 s wall-clock budget; a 413/406/422 or a
+  stopped server falls back and the row
+  reads "· on this device"; a RAW file and PDF output never upload (no request in
+  the network panel); mode switch back to "On device" sends `server: null`; a
+  reload always starts in device mode; the "Smaller files" checkbox is hidden in
+  Server mode and returns with its value when switching back.
 - Not covered in this build: Firefox (not installed here), physical iPhone memory
   behaviour on large batches.

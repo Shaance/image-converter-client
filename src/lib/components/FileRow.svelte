@@ -4,8 +4,8 @@
   import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, type OutputFormat } from '../formats';
   import { formatBytes, outputName } from '../names';
   import Icons from './Icons.svelte';
-  let { job, format, onremove, ondownscale }: {
-    job: Job; format: OutputFormat; onremove: () => void; ondownscale: () => void;
+  let { job, format, server, onremove, ondownscale }: {
+    job: Job; format: OutputFormat; server: boolean; onremove: () => void; ondownscale: () => void;
   } = $props();
   const label = $derived(OUTPUT_FORMATS.find(item => item.id === format)!.label);
   const name = $derived(outputName(job.name, format));
@@ -41,14 +41,14 @@
   </div>
   <div class="details">
     <div class="name" title={job.name}>{job.name}</div>
-    <div class="meta">{kind ? `${kind} · ` : ''}{formatBytes(job.bytes)}{#if job.status === 'done' && job.result}{' → '}{formatBytes(job.result.bytes)}{#if job.result.downscaled} · resized to {Math.round(job.result.width * job.result.height / 1e6)} MP{/if}{/if}</div>
+    <div class="meta">{kind ? `${kind} · ` : ''}{formatBytes(job.bytes)}{#if job.status === 'done' && job.result}{' → '}{formatBytes(job.result.bytes)}{#if job.result.downscaled} · resized to {Math.round(job.result.width * job.result.height / 1e6)} MP{/if}{#if server && job.result.where === 'device'} · on this device{/if}{/if}</div>
   </div>
   <div class="status" class:error={!!error}>
     {#key job.status === 'done'}
       <div class="status-content" transition:crossfade>
         {#if job.status === 'done'}<span class="done"><Icons name="check" /> Done</span>
         {:else if job.status === 'converting'}
-          <span>{job.kind === 'heic' && job.phase === 'loading-codec' ? 'Loading HEIC decoder…' : job.kind === 'raw' && job.phase === 'loading-codec' ? 'Loading RAW decoder…' : 'Converting…'}</span>
+          <span>{job.phase === 'waiting' ? 'Waiting for the server…' : job.kind === 'heic' && job.phase === 'loading-codec' ? 'Loading HEIC decoder…' : job.kind === 'raw' && job.phase === 'loading-codec' ? 'Loading RAW decoder…' : 'Converting…'}</span>
           <div class="track" aria-hidden="true"><span></span></div>
         {:else if job.status === 'queued'}Queued
         {:else}{error}{/if}

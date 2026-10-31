@@ -8,8 +8,11 @@
   import FileList from './lib/components/FileList.svelte';
   import DownloadAll from './lib/components/DownloadAll.svelte';
   import Icons from './lib/components/Icons.svelte';
+  import { SERVER_URL } from './lib/server';
   let queue = $state<ReturnType<typeof createQueue>>();
   let unavailable = $state(!supported());
+  const serverMode = $derived(queue?.mode === 'server');
+  const serverHost = $derived(new URL(SERVER_URL).host);
   // Files added while the canvas probe is still running; handed to the queue as soon as it exists.
   let pending: File[] = [];
   onMount(() => {
@@ -37,12 +40,17 @@
 <main>
   <header class="reveal">
     <div class="title">Image converter</div>
-    <ModeSwitch />
+    <ModeSwitch mode={queue?.mode ?? 'device'} onchange={mode => queue?.setMode(mode)} disabled={!queue} />
   </header>
   {#if !queue?.fileCount}
     <section use:revealHero class="hero" style="--delay: var(--stagger)">
-      <h1>Convert photos to <em>JPEG</em>, <em>PNG</em>, <em>WebP</em> and more, without uploading them.</h1>
-      <p>Everything happens in your browser. Your files never leave this device.</p>
+      {#if serverMode}
+        <h1>Convert photos to <em>JPEG</em>, <em>PNG</em>, <em>WebP</em> and more.</h1>
+        <p>Each photo is uploaded to {serverHost}, converted there, and deleted right away.</p>
+      {:else}
+        <h1>Convert photos to <em>JPEG</em>, <em>PNG</em>, <em>WebP</em> and more, without uploading them.</h1>
+        <p>Everything happens in your browser. Your files never leave this device.</p>
+      {/if}
     </section>
   {/if}
   <div class="drop-reveal reveal" style="--delay: calc(var(--stagger) * 2)">
@@ -54,7 +62,7 @@
   {#if !queue?.fileCount}
     <div class="empty-formats"><span class="label">Convert to</span>
       <FormatChips value={queue?.format ?? 'jpeg'} onchange={format => queue?.setFormat(format)}
-        smaller={queue?.smaller ?? false} onsmaller={on => queue?.setSmaller(on)} disabled={!queue} />
+        smaller={queue?.smaller ?? false} onsmaller={on => queue?.setSmaller(on)} server={serverMode} disabled={!queue} />
     </div>
   {/if}
   {#if queue?.fileCount}
@@ -63,7 +71,9 @@
   {/if}
   <div class="spacer"></div>
   <footer>
-    <div><p class="privacy"><Icons name="lock" size={14} />No uploads, no accounts, no tracking.</p>
+    <div><p class="privacy"><Icons name="lock" size={14} />{serverMode
+        ? 'No accounts, no tracking. Server mode uploads each photo for conversion only.'
+        : 'No uploads, no accounts, no tracking.'}</p>
       <p>Converted files carry no EXIF or location data.</p></div>
     <a href="https://github.com/Shaance/image-converter-client">Source on GitHub</a>
   </footer>

@@ -11,6 +11,20 @@ export const OUTPUT_FORMATS = [
 export type OutputFormat = typeof OUTPUT_FORMATS[number]['id'];
 export type InputKind = 'heic' | 'jpeg' | 'png' | 'webp' | 'gif' | 'bmp' | 'avif' | 'raw';
 
+// MIME for the uploaded file part, taken from the sniffed kind rather than
+// File.type (iOS mislabels files, and the server rejects non-image types).
+const INPUT_MIMES: Partial<Record<InputKind, string>> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  avif: 'image/avif',
+  heic: 'image/heic',
+};
+export function kindMime(kind: InputKind): string | undefined {
+  return INPUT_MIMES[kind];
+}
+
 // The single-threaded JXL wasm heap is fixed at 2 GB; larger encodes abort.
 export const JXL_MAX_PIXELS = 20_000_000;
 // The wlibraw wasm heap is fixed at 2 GB too; a 101 MP decode used ~1.5 GB, so

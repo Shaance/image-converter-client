@@ -1,7 +1,7 @@
 # Image converter
 
-Convert photos to JPEG, PNG, WebP and more without uploading them.
-Everything happens in your browser, so your files never leave your device.
+Convert photos to JPEG, PNG, WebP and more. By default everything happens in
+your browser, so your files never leave your device.
 
 **Try it: [images.hashcode.dev](https://images.hashcode.dev)**
 
@@ -14,7 +14,16 @@ Everything happens in your browser, so your files never leave your device.
 - Converted files carry no EXIF or location data.
 - Works on phones, including HEIC photos straight from an iPhone camera roll.
 
-There is a "Server" mode in the interface. It is a placeholder for a future backend and is disabled for now.
+There is also an optional "Server" mode in the mode switch, off by default on
+every page load. With it on, each eligible photo (JPEG, PNG, WebP, GIF, AVIF,
+HEIC) is uploaded one at a time to the converter server at
+[convert.hashcode.dev](https://convert.hashcode.dev) (configurable at build time
+with `VITE_SERVER_URL`), converted there, and deleted by the server immediately
+after responding — no account, no storage, no tracking, and no cookies are sent.
+RAW and BMP inputs and PDF output always convert on the device, and anything the
+server cannot do (rate limits after a short wait, oversize or unsupported files,
+outages) automatically falls back to on-device conversion, which the file's row
+marks with "on this device".
 
 ## How it works
 
@@ -45,7 +54,8 @@ reduced size instead of failing silently. JPEG XL output is also capped at 20 MP
 reduced-size offer.
 
 A few things are deliberately out of scope: inputs a browser cannot decode
-(PSD and so on), animated output, and any server-side processing.
+(PSD and so on), animated output, and server-side processing beyond the optional
+Server mode described above.
 
 ## Third-party notices
 
