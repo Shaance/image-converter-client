@@ -22,6 +22,8 @@ const AVIF_ENCODE_OPTIONS = { quality: 50, speed: 6 };
 const JXL_ENCODE_OPTIONS = { quality: 75, effort: 5 };
 // The single-threaded JXL wasm heap is fixed at 2 GB; larger encodes abort.
 const JXL_MAX_PIXELS = 20_000_000;
+// Set when a codec's last encode threw; its cached jSquash module may be broken.
+const codecFailed: Record<'avif' | 'jxl', boolean> = { avif: false, jxl: false };
 
 // The caller owns the returned bitmap and closes it in finally.
 export async function decode(file: File, kind: InputKind, fitTo?: Fit): Promise<ImageBitmap> {
@@ -63,11 +65,20 @@ export async function encode(bitmap: ImageBitmap, format: OutputFormat, phase: P
       const codec = format === 'avif'
         ? await import('@jsquash/avif/encode.js')
         : await import('@jsquash/jxl/encode.js');
-      // A fresh instance per file: one aborted encode must not break the cached module.
-      await codec.init();
+      // Re-init only after a failed encode: one abort must not break the cached
+      // module, but healthy batches reuse the single compiled instance.
+      if (codecFailed[format]) {
+        await codec.init();
+        codecFailed[format] = false;
+      }
       phase('converting');
       const options = format === 'avif' ? AVIF_ENCODE_OPTIONS : JXL_ENCODE_OPTIONS;
-      return new Blob([await codec.default(context.getImageData(0, 0, width, height), options)], { type: mime });
+      try {
+        return new Blob([await codec.default(context.getImageData(0, 0, width, height), options)], { type: mime });
+      } catch (error) {
+        codecFailed[format] = true;
+        throw error;
+      }
     }
     phase('loading-codec');
     if (format === 'pdf') {

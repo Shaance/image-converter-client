@@ -83,12 +83,46 @@ it.each([
   expect(codec.encode).toHaveBeenCalledTimes(1);
   expect(codec.encode).toHaveBeenCalledWith(
     { data: new Uint8ClampedArray([200, 100, 50, 128]), width: 1, height: 1 }, options);
-  expect(codec.init).toHaveBeenCalledTimes(1);
-  expect(codec.init.mock.invocationCallOrder[0]).toBeLessThan(codec.encode.mock.invocationCallOrder[0]);
+  expect(codec.init).not.toHaveBeenCalled();
   expect(canvases).toHaveLength(1);
   expect(canvases[0].fillRectCalls).toBe(0);
   expect(canvases[0].convertToBlobCalls).toBe(0);
   expect(phases).toEqual(['loading-codec', 'converting']);
+});
+it('reuses one compiled codec instance while encodes succeed', async () => {
+  vi.resetModules();
+  const { encode: freshEncode } = await import('./pipeline');
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'avif', () => {});
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'avif', () => {});
+  expect(jsquash.avif.encode).toHaveBeenCalledTimes(2);
+  expect(jsquash.avif.init).not.toHaveBeenCalled();
+});
+it('re-initialises a codec only after its encode failed', async () => {
+  vi.resetModules();
+  const { encode: freshEncode } = await import('./pipeline');
+  jsquash.jxl.encode.mockRejectedValueOnce(new Error('aborted'));
+  await expect(freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jxl', () => {}))
+    .rejects.toThrow('aborted');
+  expect(jsquash.jxl.init).not.toHaveBeenCalled();
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jxl', () => {});
+  expect(jsquash.jxl.init).toHaveBeenCalledTimes(1);
+  expect(jsquash.jxl.init.mock.invocationCallOrder[0])
+    .toBeLessThan(jsquash.jxl.encode.mock.invocationCallOrder[1]);
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jxl', () => {});
+  expect(jsquash.jxl.init).toHaveBeenCalledTimes(1);
+});
+it('does not re-initialise the other codec after a failure', async () => {
+  vi.resetModules();
+  const { encode: freshEncode } = await import('./pipeline');
+  jsquash.avif.encode.mockRejectedValueOnce(new Error('aborted'));
+  await expect(freshEncode({ width: 1, height: 1 } as ImageBitmap, 'avif', () => {}))
+    .rejects.toThrow('aborted');
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'jxl', () => {});
+  expect(jsquash.jxl.init).not.toHaveBeenCalled();
+  await freshEncode({ width: 1, height: 1 } as ImageBitmap, 'avif', () => {});
+  expect(jsquash.avif.init).toHaveBeenCalledTimes(1);
+  expect(jsquash.avif.init.mock.invocationCallOrder[0])
+    .toBeLessThan(jsquash.avif.encode.mock.invocationCallOrder[1]);
 });
 it('caps JPEG XL at 20 MP even when the browser probe failed', async () => {
   vi.stubGlobal('createImageBitmap', async (_: Blob, options: ImageBitmapOptions) => {

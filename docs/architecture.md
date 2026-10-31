@@ -151,8 +151,9 @@ Rules:
 - Memory: `ImageBitmap.close()` in `finally`; canvases set to 0×0 after use;
   intermediate RGBA arrays are not retained; only thumbnails (≤ 88 px, JPEG) and
   result Blobs live past a job. Revoking a URL always accompanies dropping the Blob
-  reference. AVIF and JPEG XL re-initialise the codec (`init()`) before every file,
-  so one aborted encode cannot leave the cached module broken for later files.
+  reference. AVIF and JPEG XL re-initialise the codec (`init()`) only after a
+  failed encode, so one aborted encode cannot leave the cached module broken for
+  later files, while healthy batches reuse one compiled module.
 - Worker protocol (no RPC library):
   in `{ type: 'convert', id, attempt, file, kind, format, maxArea, downscale }`
   out `{ type: 'phase', id, attempt, phase: 'loading-codec' | 'converting' }`,
