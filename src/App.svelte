@@ -45,9 +45,12 @@
     };
     const root = document.documentElement;
     if (!doc.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) { update(); return; }
+    root.classList.remove('morph-in', 'morph-out');
     root.classList.add('morphing', direction === 'in' ? 'morph-in' : 'morph-out');
-    const done = () => root.classList.remove('morphing', 'morph-in', 'morph-out');
     const transition = doc.startViewTransition(async () => { update(); await tick(); });
+    current = transition;
+    // A newer morph skips this one; only the latest may clear the classes.
+    const done = () => { if (current === transition) { current = undefined; root.classList.remove('morphing', 'morph-in', 'morph-out'); } };
     transition.ready.catch(() => {}); // a skipped transition rejects ready/finished
     transition.finished.then(done, done);
     // The update runs a frame later; files added before then must land after it.
@@ -55,6 +58,7 @@
     updating = applied;
     void applied.then(() => { if (updating === applied) updating = undefined; });
   }
+  let current: ViewTransitionLike | undefined;
   let updating: Promise<void> | undefined;
   function onAdd(files: File[]) {
     const q = queue;
