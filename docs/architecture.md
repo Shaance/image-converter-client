@@ -307,7 +307,7 @@ Rules:
 - Privacy copy, one statement per surface: the hero h1 is constant in both modes
   ("Convert photos to JPEG, PNG, WebP and more."); the hero subtitle swaps by mode
   in a stacked grid cell — device "Everything happens in your browser. Your
-  photos never leave this device." / server "Photos are uploaded to <host>,
+  photos never leave this device." / server "Photos are uploaded to our server,
   converted, and deleted right away." — so Server mode never claims files stay on the device. The footer is
   one mode-independent row at every width: the lock icon and "No accounts, tracking
   or EXIF data." on the left, with the GitHub mark and "Source on GitHub" on the right.

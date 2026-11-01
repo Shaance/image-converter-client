@@ -9,7 +9,7 @@ your browser, so your files never leave your device.
 
 - Drop in HEIC, JPEG, PNG, WebP, GIF, BMP, AVIF or camera RAW files (CR2, CR3, NEF, ARW, RAF, DNG and more) and they convert immediately, no button to press.
 - Pick JPEG, PNG, WebP, AVIF, JPEG XL, PDF, GIF or TIFF as the output. Changing the format re-converts the whole batch.
-- For JPEG and PNG output, an optional "Smaller files" toggle encodes with MozJPEG and runs PNGs through OxiPNG for smaller files, at the cost of slower conversions.
+- For on-device JPEG and PNG output, the optional "Compress files" switch uses MozJPEG and OxiPNG for smaller files at the cost of slower conversions; it is disabled with a reason for other formats and in Server mode.
 - Download each file on its own, or grab everything as one zip.
 - Converted files carry no EXIF or location data.
 - Works on phones, including HEIC photos straight from an iPhone camera roll.

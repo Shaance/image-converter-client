@@ -12,7 +12,6 @@
   let queue = $state<ReturnType<typeof createQueue>>();
   let unavailable = $state(!supported());
   const serverMode = $derived(queue?.mode === 'server');
-  const serverHost = SERVER_URL ? new URL(SERVER_URL).host : null;
   // Files added while the canvas probe is still running; handed to the queue as soon as it exists.
   let pending: File[] = [];
   onMount(() => {
@@ -24,7 +23,7 @@
         try {
           const worker = new Worker(new URL('./lib/pipeline.worker.ts', import.meta.url), { type: 'module' });
           queue = createQueue({ worker, maxArea });
-          if (pending.length) void queue.add(pending.splice(0));
+          if (pending.length) onAdd(pending.splice(0));
         } catch { unavailable = true; }
       });
     }
@@ -84,8 +83,8 @@
       <h1>Convert photos to <em>JPEG</em>, <em>PNG</em>, <em>WebP</em> and more.</h1>
       <div class="subtitle">
         <p class:active={!serverMode} aria-hidden={serverMode ? true : undefined}>Everything happens in your browser. Your photos never leave this device.</p>
-        {#if serverHost}
-          <p class:active={serverMode} aria-hidden={serverMode ? undefined : true}>Photos are uploaded to {serverHost}, converted, and deleted right away.</p>
+        {#if SERVER_URL}
+          <p class:active={serverMode} aria-hidden={serverMode ? undefined : true}>Photos are uploaded to our server, converted, and deleted right away.</p>
         {/if}
       </div>
     </section>
