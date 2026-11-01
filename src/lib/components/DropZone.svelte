@@ -30,18 +30,26 @@
       onchange={event => { onadd(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }} />
     <span class="icon"><Icons name="upload" /></span>
     {#if ready}
-      <span class="prompt" in:crossfade>{variant === 'hero' ? 'Drop images here, or' : 'Drop more images here, or'} <span class="browse">browse</span></span>
+      <span class="prompt" in:crossfade>
+        {#if variant === 'hero'}
+          <span class="when-hover">Drop images here, or <span class="browse">browse</span></span>
+          <span class="when-touch">Choose photos</span>
+        {:else}
+          <span class="when-hover">Drop more images here, or <span class="browse">browse</span></span>
+          <span class="when-touch">Choose more photos</span>
+        {/if}
+      </span>
     {:else}
       <span class="prompt" aria-live="polite">Getting ready…</span>
     {/if}
-    {#if variant === 'hero'}<span class="hint">HEIC, JPEG, PNG, WebP, GIF, BMP</span>{/if}
+    {#if variant === 'hero'}<span class="hint">HEIC, JPEG, PNG, AVIF, RAW and more</span>{/if}
   </label>
 {/if}
 
 <style>
   label { display: flex; align-items: center; justify-content: center; border: 1.5px dashed var(--dashed); border-radius: 12px; background: var(--surface); color: var(--muted); cursor: pointer; transition: border-color var(--fast) var(--ease-out), background var(--fast) var(--ease-out); }
   label:has(:focus-visible), .notice:focus { outline: 2px solid var(--teal); outline-offset: 2px; }
-  .hero { min-height: 260px; flex-direction: column; gap: 12px; }
+  .hero { min-height: 260px; flex-direction: column; gap: 12px; padding: 24px 16px; text-align: center; }
   .compact { margin-top: 40px; padding: 18px; gap: 10px; font-size: 14px; }
   .hero .prompt { font-size: 17px; }
   .prompt { color: var(--ink); }
@@ -50,7 +58,15 @@
   .hint, .notice { font-size: 13px; color: var(--muted); }
   .notice { padding: 18px; border: 1px solid var(--rule); border-radius: 12px; }
   .dragging { border-style: solid; border-color: var(--teal); background: var(--rule); }
-  @media (max-width: 719px) { .compact { margin-top: 24px; padding: 16px; gap: 8px; } }
+  .when-touch { display: none; }
+  @media (hover: none) {
+    .when-hover { display: none; }
+    .when-touch { display: inline; }
+  }
+  @media (max-width: 719px) {
+    .hero { min-height: 200px; }
+    .compact { margin-top: 24px; padding: 16px; gap: 8px; }
+  }
   .preparing .prompt { color: var(--muted); }
   @media (prefers-reduced-motion: no-preference) {
     label { transition: border-color var(--fast) var(--ease-out), background var(--fast) var(--ease-out), transform var(--press) var(--ease-out); }

@@ -1,6 +1,6 @@
 # Image converter, on-device rebuild
 
-Status: contract v2, 2026-09-15. Implements the three mocks on page 2 of the design
+Status: contract v3, 2026-11-01 (v2 2026-09-15). Implements the three mocks on page 2 of the design
 canvas (empty, busy, phone). Where this document and a mock disagree, this document
 wins; the overrides are listed under "Mock overrides".
 
@@ -32,19 +32,24 @@ a per-session choice and is always off on page load.
   supported browser and every state. Every gap is filled by a lazily loaded
   library, so no "unsupported format" state exists. BMP output is dropped.
 - Output files carry no metadata (no EXIF, no GPS, no colour profile); the footer
-  says so in one line. Transparency is flattened onto white for JPEG, PDF and GIF;
+  names the EXIF part in one line. Transparency is flattened onto white for JPEG, PDF and GIF;
   PNG, WebP, AVIF, JPEG XL and TIFF keep alpha. JPEG quality 0.9, WebP quality 0.85,
   AVIF quality 50 / speed 6, JPEG XL quality 75 / effort 5. PDF: one
   page per file, page size = pixels / 300 per inch.
-- "Smaller files" is an opt-in checkbox under the format chips (in both the empty
-  and busy states), shown only when the selected output is JPEG or PNG. When on,
-  JPEG is encoded with MozJPEG (quality 85, progressive) and PNG is the native PNG
+- "Compress files" is an opt-in switch next to the format chips in the settings
+  block, which App renders once below the drop zone in both the empty and busy
+  states (same instance, so it never relocates). It is always rendered: when the
+  selected output is not JPEG or PNG, or in Server mode, it is disabled and shown
+  off with a reason ("Available for JPEG and PNG" / "Available on device only");
+  the stored preference is kept for when it applies again. When on, JPEG is
+  encoded with MozJPEG (quality 85, progressive) and PNG is the native PNG
   passed through OxiPNG (level 2, lossless); if the codec chunk, its init or the
   encode fails, the native encoder's result is used instead of failing the file.
-  Off by default, not
-  persisted across reloads. Changing it while JPEG or PNG is selected re-converts
-  the batch exactly like a format change; on any other format it only records the
-  value for when JPEG or PNG is picked.
+  Off by default, not persisted across reloads. Changing it while JPEG or PNG is
+  selected re-converts the batch exactly like a format change; on any other
+  format it only records the value. The queue sends `smaller: smaller && mode ===
+  'device'`, so server-mode requests (including on-device fallbacks) never
+  compress.
 - Supported browsers: `OffscreenCanvas`, `createImageBitmap`, module workers.
   API floors: Safari 16.4, Chrome 80, Firefox 114; product floor Safari 17 / iOS 17.
   Detection is synchronous feature checks plus the worker's `error` event. An
@@ -90,20 +95,28 @@ a per-session choice and is always off on page load.
 
 ## Journey
 
-1. Empty: title, one-line promise, dashed drop zone ("Drop images here, or
-   browse"), format chips under it, footer with the lock line, the metadata line
-   and the GitHub link. On touch devices the drop zone is a tap target that opens
-   the picker.
+1. Empty: title, mode switch, one-line promise (the hero h1 is constant in both
+   modes; the subtitle swaps by mode in a stacked cell), dashed drop zone
+   ("Drop images here, or browse"; "Choose photos" on touch), the settings block
+   (format chips + "Compress files" switch) rendered once below the drop zone in
+   both states, and the footer: one mode-independent lock line plus the GitHub
+   link. On touch devices the drop zone is a tap target that opens the picker.
 2. Files added: the drop zone collapses to a slim "Drop more images here, or
-   browse" strip; a header line reads "6 files · 41.2 MB in · 3 of 6 done"; one row
+   browse" strip; the settings block stays between the drop zone and the list
+   header; a header line reads "6 files · 41.2 MB in · 3 of 6 done"; one row
    per file with thumbnail, name, "HEIC · 6.1 MB → 2.4 MB", a status cell, and
-   trailing actions: a download link once done, and always a remove (×) button.
+   trailing actions: a download link once done (hidden when it is the only file,
+   so the download bar is the single Download action), and always a remove (×)
+   button.
 3. Batch settled (nothing queued or converting): header reads
    "41.2 MB → 14.8 MB · all done", or "4 ready · 2 need attention" when some rows
-   failed. "Download all · zip" is a real `<a download>` link, enabled when at
-   least one row is done. On phones it is full width, sticky at the bottom (safe
-   area respected), with the hint "One zip with every converted file. Or tap a
-   file to save it alone."
+   failed. The download bar under the list is a quiet pill while converting
+   ("Converting · 2 of 3", "Converting…" for one file), hides entirely when every
+   row failed, links straight to the single done file's blob when exactly one row
+   is done ("Download · 2.4 MB"), and otherwise becomes a teal `<a download>` zip
+   link ("Download all · 5.3 MB", or "Download 2 files · 5.3 MB" when some rows
+   failed). On phones the bar is full width, sticky at the bottom (opaque
+   background, top hairline, safe area respected).
 4. Errors are per row, in words, with the one action that resolves them
    (remove, or the downscale opt-in). A failed row never blocks other rows or the
    zip (the zip holds the done rows).
@@ -121,7 +134,8 @@ error?: { code, pixels?, limit? } }`
 Statuses: `queued`, `converting`, `done`, `failed`, `awaiting-downscale`.
 
 Queue-level settings: `format` (default `'jpeg'`), `smaller` (default `false`,
-the "Smaller files" toggle; not persisted), and `mode` (`'device' | 'server'`,
+the "Compress files" switch; not persisted; sent to the worker only in device
+mode), and `mode` (`'device' | 'server'`,
 default `'device'`; never persisted, so Server mode is off on every page load).
 
 Error codes: `unrecognized` (sniff failed or zero bytes: "Not an image we can
@@ -156,9 +170,9 @@ Transitions:
 Zip: `{ status: 'idle' | 'preparing' | 'ready', url? }`, owned by the queue. When
 the batch settles with ≥1 done row, the queue builds the zip (client-zip) from a
 snapshot of the done rows and exposes a URL; any list change or format change
-revokes it and returns to idle. The button is an `<a download>` only when ready,
-otherwise a disabled button with the "becomes available when every file is done"
-hint. No synthetic clicks anywhere.
+revokes it and returns to idle. DownloadBar renders it as a real `<a download>`
+zip link (hidden when every row failed, direct blob link when exactly one row is
+done); no synthetic clicks anywhere.
 
 Worker: `{ status: 'starting' | 'ready' | 'unavailable' }`.
 
@@ -170,7 +184,7 @@ Svelte 5 (runes) + Vite + TypeScript, static build, Vercel as is.
 src/
   main.ts                 mounts App
   app.css                 tokens (light + dark), fonts, reset, motion tokens
-  App.svelte              composition root: header, mode switch, drop zone, list, footer
+  App.svelte              composition root: header, mode switch, hero, drop zone, the persistent settings block (FormatChips), list, download bar, footer; owns the empty<->busy view-transition helper
   lib/
     formats.ts            OUTPUT_FORMATS table (id, label, mime, extension), sniff(bytes) → InputKind | null
     names.ts              outputName(inputName, format), uniqueNames(names) for the zip, formatBytes
@@ -181,7 +195,7 @@ src/
     queue.svelte.ts       the state above; owns the Worker instance and the zip
     zip.ts                buildZip(rows) → Blob via client-zip
     components/
-      ModeSwitch.svelte, DropZone.svelte, FormatChips.svelte, FileList.svelte, FileRow.svelte, DownloadAll.svelte
+      ModeSwitch.svelte, DropZone.svelte, FormatChips.svelte, FileList.svelte, FileRow.svelte, DownloadBar.svelte
 ```
 
 Rules:
@@ -244,8 +258,12 @@ Rules:
   stripped, extensionless names get the extension appended. Inside the zip,
   collisions get ` (2)`, ` (3)` against the full set of already reserved names.
 - Server mode (`src/lib/server.ts`, called from `convert()` in pipeline.ts):
-  `SERVER_URL` comes from `VITE_SERVER_URL`, default `https://convert.hashcode.dev`,
-  trailing slashes stripped. A job is eligible when the request carries a server
+  `SERVER_URL` comes from `VITE_SERVER_URL` at build time (set in the Vercel
+  project env for production), trimmed and with trailing slashes stripped. There
+  is no default: when it is unset or not an http(s) URL, `SERVER_URL` is null, the
+  mode switch is not rendered, and every job converts on the device. Tests set a
+  placeholder (`https://converter.test/`) in vite.config.ts. A job is eligible
+  when the request carries a server
   AND the sniffed kind is jpeg/png/webp/gif/avif/heic AND the output is
   jpeg/png/webp/avif/jxl/gif/tiff; RAW/BMP inputs and PDF output always convert on
   the device, and so does any explicit downscale attempt (`downscale: true`): the
@@ -276,8 +294,9 @@ Rules:
   immediately. Falling back emits phase `converting` first (a row never stays on
   "Waiting for the server…" during local decoding) and then runs the existing
   on-device `convert()` for the same
-  file and reports `where: 'device'`, so the too-large/downscale journey, RAW and
-  "Smaller files" behave exactly as in device mode; a stuck server can never stall
+  file and reports `where: 'device'`, so the too-large/downscale journey and RAW
+  behave exactly as in device mode (compression is the exception: it stays off
+  for server-mode fallbacks); a stuck server can never stall
   the batch: a file leaves the server path within 90 s and then converts on the
   device.
   Thumbnail/dimensions for a server result are best effort: decode the result blob
@@ -285,15 +304,20 @@ Rules:
   width/height 0; `downscaled` is false for server results. The server strips
   metadata, stores nothing and deletes everything after responding; CORS allows only
   the site origin.
-- Privacy copy: while Server mode is on, the hero, the line under the mode switch
-  ("Photos are uploaded to <host>, converted, and deleted right away.") and the
-  footer ("No accounts, no tracking. Server mode uploads each photo for conversion
-  only.") must never claim files stay on the device; in device mode the copy is
-  unchanged ("No uploads, no accounts, no tracking."). The "Smaller files" checkbox
-  is hidden in Server mode (MozJPEG/OxiPNG are on-device only) but its value is
-  kept for when the user switches back. A done row that fell back shows
-  "· on this device" in its meta line; a `waiting` phase reads "Waiting for the
-  server…".
+- Privacy copy, one statement per surface: the hero h1 is constant in both modes
+  ("Convert photos to JPEG, PNG, WebP and more."); the hero subtitle swaps by mode
+  in a stacked grid cell — device "Everything happens in your browser. Your
+  photos never leave this device." / server "Photos are uploaded to our server,
+  converted, and deleted right away." — so Server mode never claims files stay on the device. The footer is
+  one mode-independent row at every width: the lock icon and "No accounts, tracking
+  or EXIF data." on the left, with the GitHub mark and "Source on GitHub" on the right.
+  On phones, the GitHub link shows only the mark in a 44×44px target labelled
+  "Source on GitHub". The "Compress files"
+  switch is disabled and shown off in Server mode ("Available on device only";
+  MozJPEG/OxiPNG are on-device only) but its value is kept for when the user
+  switches back, and the queue never sends `smaller` in server mode. A done row
+  that fell back shows "· on this device" in its meta line; a `waiting` phase
+  reads "Waiting for the server…".
 - The file input `accept` lists `image/*,.heic,.heif,image/heic,image/heif` plus
   the RAW extensions `.dng,.cr2,.cr3,.nef,.arw,.raf,.orf,.rw2,.pef,.srw,.iiq,image/x-adobe-dng`
   so iOS hands over HEIC originals instead of transcoding and pickers on all
@@ -304,7 +328,7 @@ Rules:
 Native controls only: `<button>`, `<input type="file">` behind a `<label>` drop
 zone, a `role="radiogroup"` of format chips (`aria-checked`, arrow keys), the mode
 switch as a real radio group with both options enabled (disabled only until the
-queue exists). Remove buttons are
+queue exists), the "Compress files" control as `<input type="checkbox" role="switch">`. Remove buttons are
 labelled "Remove IMG_4821.HEIC", download links "Download IMG_4821.jpg". The header
 count line is `aria-live="polite"`; rows are not announced individually. Visible
 focus rings (2px teal outline, 2px offset) everywhere. Status is always text, never
@@ -323,23 +347,51 @@ is reserved for disabled states.
 - Every row has a thumbnail slot: a tinted square with the format tag while queued
   or failed, the worker-made thumbnail once done.
 
-## Motion (tokens from hashcode.dev; reduced motion keeps opacity/colour only)
+## Motion (contract v3; tokens from hashcode.dev; reduced motion keeps opacity/colour only)
 
 `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`, `--fast: 160ms`, `--standard: 220ms`,
-`--reveal: 700ms`.
+`--reveal: 700ms`, `--morph: 300ms`.
 
 - Page load: header, hero, drop zone fade in with an 8px rise, 700 ms, 80 ms stagger.
+- Empty ↔ busy is one view transition (`document.startViewTransition`), driven by
+  App's single `morph()` helper (first add, Clear all, and last-row removal all go
+  through it, so both routes to empty look identical). Names: `hero`, `drop`,
+  `settings`, `list`, `actions`, `footer`; the root crossfade is suppressed
+  (`::view-transition-old/new(root) { animation: none }`) and all groups run
+  `--morph` (300 ms) with `--ease-out`. Add (first files): the old hero fades and
+  rises 6 px over `--fast`; the new list and actions fade and rise from 8 px over
+  `--standard` after a 120 ms delay, so the hero is gone before the list enters.
+  Clear all: the reverse — list/actions out over `--fast`, hero in over
+  `--standard` after `--stagger`. The drop-zone snapshots keep their size
+  (`height: 100%; object-fit: none; object-position: center`) so text never
+  stretches. Rows created during a morph skip the insertion animation (the
+  insertion action checks `html.morphing`); later adds still stagger. Files
+  added before a pending morph's update has run wait for it, so Clear all
+  followed at once by an add keeps the new files.
+  Progressive enhancement: without the API (e.g. Safari 17) or under
+  prefers-reduced-motion, `morph()` runs the update directly and rows still rise
+  in via the insertion animation. The state update is never gated on the
+  transition's promises, so an interrupted transition (add during clear, clear
+  during add, mode switch) can never leave stale or missing UI; a skipped
+  transition's `ready`/`finished` rejections are swallowed.
+- Fixed-height stacked cells: every mode- or state-dependent string pair (hero
+  subtitle, compress-switch hint, download-bar labels) lives in one `display:
+  grid` cell with all variants at `grid-area: 1 / 1`; inactive variants get
+  `visibility: hidden` (which also hides them from assistive tech) and crossfade over `--fast` (instant under
+  reduced motion). Heights therefore never change between states. The settings
+  block itself is rendered once by App below the drop zone in both empty and busy
+  states — same instance, it never relocates.
 - Row insertion: fade + 4px rise, 220 ms, 40 ms stagger for the first 8 rows of an
   add; later rows appear instantly.
 - Row removal: Svelte `slide`, 160 ms.
 - Drop-zone dragover: border solid teal + background tint, 160 ms.
 - Converting: 3px track, a 30% teal segment sliding left→right on a 1.2 s linear
   loop; reduced motion shows a static 40% segment.
-- Done: status crossfade 160 ms. Download all: colour transition 220 ms when it
-  becomes ready. Pressables: `scale(0.98)` 100 ms down-state; chip selection
-  background 160 ms.
-- Nothing else animates. No hover lift on rows, no celebration, no layout
-  animation between empty and busy.
+- Done: status crossfade 160 ms, no scale pop. Download bar: background/colour
+  `--standard` when it becomes ready, label stacked-cell crossfade `--fast`.
+  Pressables: `scale(0.96)` 100 ms down-state; hover fills only under
+  `@media (hover: hover) and (pointer: fine)`; chip selection background 160 ms.
+- Nothing else animates. No hover lift on rows, no celebration.
 
 ## Libraries (pinned)
 
@@ -371,7 +423,7 @@ is reserved for disabled states.
   `server` field, `waiting` phase, optional thumbnail).
 - Built site (`vite preview`), Chromium and Safari, plus iOS Simulator Safari:
   each of the eight outputs from a JPEG, HEIC → JPEG, PNG with alpha → JPEG/PNG,
-  the "Smaller files" toggle off and on for JPEG and PNG (MozJPEG/OxiPNG chunks
+  the "Compress files" switch off and on for JPEG and PNG (MozJPEG/OxiPNG chunks
   fetched, native fallback intact),
   EXIF orientation 6 JPEG, a 48 MP image, a 24 MP JPEG → JPEG XL offers
   "Convert at 20 MP", then converts, and a later 12 MP file still converts,
@@ -390,7 +442,9 @@ is reserved for disabled states.
   stopped server falls back and the row
   reads "· on this device"; a RAW file and PDF output never upload (no request in
   the network panel); mode switch back to "On device" sends `server: null`; a
-  reload always starts in device mode; the "Smaller files" checkbox is hidden in
-  Server mode and returns with its value when switching back.
+  reload always starts in device mode; the "Compress files" switch is disabled and
+  shown off in Server mode (hint "Available on device only") and returns with its
+  value when switching back, and server-mode convert requests carry
+  `smaller: false`.
 - Not covered in this build: Firefox (not installed here), physical iPhone memory
   behaviour on large batches.

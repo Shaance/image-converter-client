@@ -73,7 +73,9 @@ export function createQueue({ worker, maxArea }: { worker: Worker; maxArea: numb
     job.status = 'converting'; job.phase = undefined;
     inFlight = { id: job.id, attempt: job.attempt };
     const message: ConvertRequest = { type: 'convert', ...inFlight, file: job.file,
-      kind: job.kind as InputKind, format, maxArea, downscale: consent.has(job.id), smaller,
+      kind: job.kind as InputKind, format, maxArea, downscale: consent.has(job.id),
+      // Compression codecs are on-device only: server mode never sends smaller.
+      smaller: smaller && mode === 'device',
       server: mode === 'server' ? SERVER_URL : null };
     try { worker.postMessage(message); }
     catch { workerLost(); }

@@ -1,9 +1,19 @@
 import { kindMime, OUTPUT_FORMATS, type InputKind, type OutputFormat } from './formats';
 
-// Server-mode config. VITE_SERVER_URL lets local and preview builds point at
-// another imagor host; the default is the production converter.
-export const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? 'https://convert.hashcode.dev')
-  .replace(/\/+$/, '');
+// Server-mode endpoint, set at build time with VITE_SERVER_URL (on Vercel, a
+// project environment variable). There is no built-in default: a build without
+// a valid http(s) URL has no Server mode and converts on the device only.
+export function parseServerUrl(raw: string | undefined): string | null {
+  const value = raw?.trim().replace(/\/+$/, '');
+  if (!value) return null;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'https:' || protocol === 'http:' ? value : null;
+  } catch {
+    return null;
+  }
+}
+export const SERVER_URL = parseServerUrl(import.meta.env.VITE_SERVER_URL);
 
 // What the server can take and produce. RAW/BMP inputs and PDF output always
 // convert on the device.
