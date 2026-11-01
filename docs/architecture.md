@@ -258,8 +258,12 @@ Rules:
   stripped, extensionless names get the extension appended. Inside the zip,
   collisions get ` (2)`, ` (3)` against the full set of already reserved names.
 - Server mode (`src/lib/server.ts`, called from `convert()` in pipeline.ts):
-  `SERVER_URL` comes from `VITE_SERVER_URL`, default `https://convert.hashcode.dev`,
-  trailing slashes stripped. A job is eligible when the request carries a server
+  `SERVER_URL` comes from `VITE_SERVER_URL` at build time (set in the Vercel
+  project env for production), trimmed and with trailing slashes stripped. There
+  is no default: when it is unset or not an http(s) URL, `SERVER_URL` is null, the
+  mode switch is not rendered, and every job converts on the device. Tests set a
+  placeholder (`https://converter.test/`) in vite.config.ts. A job is eligible
+  when the request carries a server
   AND the sniffed kind is jpeg/png/webp/gif/avif/heic AND the output is
   jpeg/png/webp/avif/jxl/gif/tiff; RAW/BMP inputs and PDF output always convert on
   the device, and so does any explicit downscale attempt (`downscale: true`): the

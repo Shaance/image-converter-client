@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { convertOnServer, SERVER_URL, serverEligible, serverPath, type ServerOutcome } from './server';
+import { convertOnServer, parseServerUrl, SERVER_URL, serverEligible, serverPath, type ServerOutcome } from './server';
 import type { InputKind, OutputFormat } from './formats';
+
+// Matches the placeholder VITE_SERVER_URL in vite.config.ts.
+const SERVER = 'https://converter.test';
 
 // A file whose File.type deliberately disagrees with the sniffed kind, like an
 // iOS-mislabeled photo: the upload must use the kind's MIME instead.
@@ -15,7 +18,7 @@ let phases: string[];
 const phase = (p: 'waiting' | 'converting') => { phases.push(p); };
 const call = (over: { kind?: InputKind; format?: OutputFormat; server?: string; f?: File; signal?: AbortSignal } = {}) =>
   convertOnServer({
-    server: over.server ?? SERVER_URL,
+    server: over.server ?? SERVER,
     file: over.f ?? file(),
     kind: over.kind ?? 'jpeg',
     format: over.format ?? 'png',
@@ -34,8 +37,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('defaults SERVER_URL to the production converter without a trailing slash', () => {
-  expect(SERVER_URL).toBe('https://convert.hashcode.dev');
+describe('server URL config', () => {
+  it('reads VITE_SERVER_URL at build time and strips trailing slashes', () => {
+    // vite.config.ts sets VITE_SERVER_URL to https://converter.test/ for tests.
+    expect(SERVER_URL).toBe(SERVER);
+  });
+
+  it('has no server, and so no Server mode, when the variable is unset or blank', () => {
+    expect(parseServerUrl(undefined)).toBeNull();
+    expect(parseServerUrl('')).toBeNull();
+    expect(parseServerUrl('  ')).toBeNull();
+  });
+
+  it('rejects values that are not http(s) URLs instead of crashing the page', () => {
+    expect(parseServerUrl('convert.hashcode.dev')).toBeNull();
+    expect(parseServerUrl('javascript:alert(1)')).toBeNull();
+    expect(parseServerUrl('ftp://convert.example')).toBeNull();
+  });
+
+  it('accepts http(s) URLs, trimmed and without trailing slashes', () => {
+    expect(parseServerUrl(' https://convert.example// ')).toBe('https://convert.example');
+    expect(parseServerUrl('http://localhost:8000')).toBe('http://localhost:8000');
+  });
 });
 
 describe('eligibility and paths', () => {
@@ -67,7 +90,7 @@ describe('request shape', () => {
     await call({ kind, f: file('photo.bin', 'image/heic') });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`${SERVER_URL}/unsafe/filters:format(png)/`);
+    expect(url).toBe(`${SERVER}/unsafe/filters:format(png)/`);
     expect(init.method).toBe('POST');
     expect(init.credentials).toBe('omit');
     expect(init.mode).toBe('cors');
