@@ -42,14 +42,14 @@
     {:else}
       <span class="prompt" aria-live="polite">Getting ready…</span>
     {/if}
-    {#if variant === 'hero'}<span class="hint">HEIC, JPEG, PNG, WebP, GIF, BMP</span>{/if}
+    {#if variant === 'hero'}<span class="hint">HEIC, JPEG, PNG, AVIF, RAW and more</span>{/if}
   </label>
 {/if}
 
 <style>
   label { display: flex; align-items: center; justify-content: center; border: 1.5px dashed var(--dashed); border-radius: 12px; background: var(--surface); color: var(--muted); cursor: pointer; transition: border-color var(--fast) var(--ease-out), background var(--fast) var(--ease-out); }
   label:has(:focus-visible), .notice:focus { outline: 2px solid var(--teal); outline-offset: 2px; }
-  .hero { min-height: 260px; flex-direction: column; gap: 12px; }
+  .hero { min-height: 260px; flex-direction: column; gap: 12px; padding: 24px 16px; text-align: center; }
   .compact { margin-top: 40px; padding: 18px; gap: 10px; font-size: 14px; }
   .hero .prompt { font-size: 17px; }
   .prompt { color: var(--ink); }
