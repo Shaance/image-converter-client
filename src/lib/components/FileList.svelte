@@ -75,6 +75,7 @@
   }
   @media (max-width: 719px) {
     section { margin-top: 28px; padding-bottom: 24px; }
+    section:has(+ :global(.bar)) li:last-child :global(.row) { border-bottom: 0; }
     .toolbar { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 12px; }
     .summary { flex-wrap: wrap; gap: 6px 14px; }
     h2 { font-size: 24px; }

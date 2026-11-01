@@ -32,7 +32,7 @@ a per-session choice and is always off on page load.
   supported browser and every state. Every gap is filled by a lazily loaded
   library, so no "unsupported format" state exists. BMP output is dropped.
 - Output files carry no metadata (no EXIF, no GPS, no colour profile); the footer
-  says so in one line. Transparency is flattened onto white for JPEG, PDF and GIF;
+  names the EXIF part in one line. Transparency is flattened onto white for JPEG, PDF and GIF;
   PNG, WebP, AVIF, JPEG XL and TIFF keep alpha. JPEG quality 0.9, WebP quality 0.85,
   AVIF quality 50 / speed 6, JPEG XL quality 75 / effort 5. PDF: one
   page per file, page size = pixels / 300 per inch.
@@ -305,8 +305,10 @@ Rules:
   in a stacked grid cell — device "Everything happens in your browser. Your
   photos never leave this device." / server "Photos are uploaded to <host>,
   converted, and deleted right away." — so Server mode never claims files stay on the device. The footer is
-  one mode-independent line with the lock icon: "No accounts, no tracking, no EXIF
-  or location data in converted files." plus the GitHub link. The "Compress files"
+  one mode-independent row at every width: the lock icon and "No accounts, tracking
+  or EXIF data." on the left, with the GitHub mark and "Source on GitHub" on the right.
+  On phones, the GitHub link shows only the mark in a 44×44px target labelled
+  "Source on GitHub". The "Compress files"
   switch is disabled and shown off in Server mode ("Available on device only";
   MozJPEG/OxiPNG are on-device only) but its value is kept for when the user
   switches back, and the queue never sends `smaller` in server mode. A done row

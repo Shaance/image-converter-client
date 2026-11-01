@@ -40,7 +40,7 @@
   /* Stacked cell: every label occupies one grid cell, so the pill height never
      changes and the quiet -> ready swap crossfades. */
   .labels { display: grid; padding: 12px 20px; font-size: 14px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .labels span { grid-area: 1 / 1; display: inline-flex; align-items: center; gap: 8px; }
+  .labels span { grid-area: 1 / 1; justify-self: center; display: inline-flex; align-items: center; gap: 8px; }
   .labels span:not(.active) { visibility: hidden; }
   .cover { position: absolute; inset: 0; border-radius: 999px; }
   @media (prefers-reduced-motion: no-preference) {

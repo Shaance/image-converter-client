@@ -103,8 +103,8 @@
   {/if}
   <div class="spacer"></div>
   <footer>
-    <p class="privacy"><Icons name="lock" size={14} />No accounts, no tracking, no EXIF or location data in converted files.</p>
-    <a href="https://github.com/Shaance/image-converter-client">Source on GitHub</a>
+    <p class="privacy"><Icons name="lock" size={14} />No accounts, tracking or EXIF data.</p>
+    <a href="https://github.com/Shaance/image-converter-client" aria-label="Source on GitHub"><Icons name="github" /><span>Source on GitHub</span></a>
   </footer>
 </main>
 
@@ -125,8 +125,9 @@
   footer { view-transition-name: footer; display: flex; justify-content: space-between; align-items: center; gap: 20px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 20px; margin-top: 0; }
   .spacer { flex-grow: 1; min-height: 64px; }
   footer p { margin: 0; }
-  .privacy { display: flex; align-items: center; gap: 6px; }
-  footer a { color: var(--muted); white-space: nowrap; }
+  .privacy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  footer a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; color: var(--muted); white-space: nowrap; }
+  @media (hover: hover) and (pointer: fine) { footer a:hover { color: var(--teal-dark); } }
   @media (prefers-reduced-motion: no-preference) {
     .subtitle p { transition: opacity var(--fast) var(--ease-out), visibility var(--fast); }
     .subtitle p:not(.active) { opacity: 0; }
@@ -136,7 +137,9 @@
     .hero { padding: 32px 0 28px; }
     h1 { font-size: 40px; }
     .settings { padding-top: 24px; }
-    footer { flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 0; }
+    footer { gap: 8px; }
+    footer a { width: 44px; height: 44px; }
+    footer a span { display: none; }
     .spacer { min-height: 40px; }
   }
   @media (max-width: 389px) {
