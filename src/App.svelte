@@ -34,7 +34,7 @@
   let initialReveal = true;
   function revealHero(node: HTMLElement) { if (initialReveal) node.classList.add('reveal'); initialReveal = false; }
   async function focusDrop() { await tick(); dropZone.focus(); }
-  type ViewTransitionLike = { ready: Promise<void>; finished: Promise<void> };
+  type ViewTransitionLike = { ready: Promise<void>; finished: Promise<void>; updateCallbackDone: Promise<void> };
   // One helper owns every empty <-> busy morph (first add, clear all, last-row
   // removal). The state update always runs, even when the transition is skipped,
   // so an interrupted morph (add during clear, clear during add, mode switch)
@@ -50,10 +50,16 @@
     const transition = doc.startViewTransition(async () => { update(); await tick(); });
     transition.ready.catch(() => {}); // a skipped transition rejects ready/finished
     transition.finished.then(done, done);
+    // The update runs a frame later; files added before then must land after it.
+    const applied = transition.updateCallbackDone.catch(() => {});
+    updating = applied;
+    void applied.then(() => { if (updating === applied) updating = undefined; });
   }
+  let updating: Promise<void> | undefined;
   function onAdd(files: File[]) {
     const q = queue;
     if (!q) { pending.push(...files); return; }
+    if (updating) { void updating.then(() => onAdd(files)); return; }
     // q.add pushes the jobs synchronously, so the transition's snapshot sees them.
     if (q.fileCount === 0) morph(() => void q.add(files), 'in');
     else void q.add(files);
@@ -100,7 +106,8 @@
 
 <style>
   main { max-width: 1200px; min-height: 100svh; margin: 0 auto; padding: 40px 96px 56px; display: flex; flex-direction: column; }
-  header { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+  /* Wraps only below ~350 px, where the switch no longer fits beside the title. */
+  header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; }
   .title { font: 500 24px var(--serif); white-space: nowrap; }
   .hero { view-transition-name: hero; padding: 96px 0 48px; max-width: 760px; }
   h1 { font: 400 56px/1.08 var(--serif); margin: 0 0 20px; letter-spacing: -.01em; text-wrap: pretty; }
@@ -129,6 +136,7 @@
     .spacer { min-height: 40px; }
   }
   @media (max-width: 389px) {
+    header { column-gap: 10px; }
     .title { font-size: 21px; }
   }
 </style>

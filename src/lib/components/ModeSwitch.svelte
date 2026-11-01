@@ -16,7 +16,7 @@
 <style>
   /* Equal-width segments with one sliding ink thumb: the switch keeps its size
      in both modes, so nothing below the header moves. */
-  .switch { position: relative; display: grid; grid-template-columns: 1fr 1fr; min-width: 0; margin: 0; padding: 3px; border: 1px solid var(--rule); border-radius: 999px; font-size: 13px; }
+  .switch { position: relative; display: grid; grid-template-columns: 1fr 1fr; flex-shrink: 0; margin: 0; padding: 3px; border: 1px solid var(--rule); border-radius: 999px; font-size: 13px; }
   .thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2); border-radius: 999px; background: var(--ink); }
   .switch.server .thumb { transform: translateX(100%); }
   label { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; padding: 7px 14px; border-radius: 999px; white-space: nowrap; font-weight: 500; color: var(--muted); cursor: pointer; }

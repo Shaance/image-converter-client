@@ -290,8 +290,9 @@ Rules:
   immediately. Falling back emits phase `converting` first (a row never stays on
   "Waiting for the server…" during local decoding) and then runs the existing
   on-device `convert()` for the same
-  file and reports `where: 'device'`, so the too-large/downscale journey, RAW and
-  "Compress files" behave exactly as in device mode; a stuck server can never stall
+  file and reports `where: 'device'`, so the too-large/downscale journey and RAW
+  behave exactly as in device mode (compression is the exception: it stays off
+  for server-mode fallbacks); a stuck server can never stall
   the batch: a file leaves the server path within 90 s and then converts on the
   device.
   Thumbnail/dimensions for a server result are best effort: decode the result blob
@@ -357,8 +358,10 @@ is reserved for disabled states.
   Clear all: the reverse — list/actions out over `--fast`, hero in over
   `--standard` after `--stagger`. The drop-zone snapshots keep their size
   (`height: 100%; object-fit: none; object-position: center`) so text never
-  stretches. Row-insertion stagger is suppressed for the transitioned add
-  (`html.morphing li.insert { animation: none }`); later adds still stagger.
+  stretches. Rows created during a morph skip the insertion animation (the
+  insertion action checks `html.morphing`); later adds still stagger. Files
+  added before a pending morph's update has run wait for it, so Clear all
+  followed at once by an add keeps the new files.
   Progressive enhancement: without the API (e.g. Safari 17) or under
   prefers-reduced-motion, `morph()` runs the update directly and rows still rise
   in via the insertion animation. The state update is never gated on the

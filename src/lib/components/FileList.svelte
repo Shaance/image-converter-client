@@ -20,7 +20,8 @@
     const index = addedThisFrame++;
     if (!resetPending) { resetPending = true; requestAnimationFrame(() => { addedThisFrame = 0; resetPending = false; }); }
     (node as HTMLElement).style.setProperty('--row-delay', `calc(${index} * var(--row-stagger))`);
-    if (index < 8) node.classList.add('insert');
+    // Rows created inside App's view transition arrive with it, not on their own.
+    if (index < 8 && !document.documentElement.classList.contains('morphing')) node.classList.add('insert');
     return { destroy() { seen.delete(id); } };
   }
   function removal(node: Element) {
@@ -67,8 +68,6 @@
   .clear { min-height: 44px; padding: 0 10px; border-radius: 999px; font-size: 13px; color: var(--muted); white-space: nowrap; }
   ul { list-style: none; padding: 0; margin: 0; }
   li:global(.insert) { animation: row-opacity var(--standard) var(--ease-out) var(--row-delay) backwards; }
-  /* The transitioned add runs inside a view transition: no double choreography. */
-  :global(html.morphing) li:global(.insert) { animation: none; }
   @keyframes row-opacity { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: no-preference) {
     li:global(.insert) { animation-name: row-rise; }
