@@ -1,8 +1,8 @@
 <script lang="ts">
   import { OUTPUT_FORMATS, type OutputFormat } from '../formats';
-  let { value, onchange, smaller, onsmaller, compact = false, disabled = false }: {
+  let { value, onchange, smaller, onsmaller, server = false, compact = false, disabled = false }: {
     value: OutputFormat; onchange: (format: OutputFormat) => void;
-    smaller: boolean; onsmaller: (on: boolean) => void; compact?: boolean; disabled?: boolean;
+    smaller: boolean; onsmaller: (on: boolean) => void; server?: boolean; compact?: boolean; disabled?: boolean;
   } = $props();
   function navigate(event: KeyboardEvent, index: number) {
     const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
@@ -23,7 +23,7 @@
         onclick={() => onchange(format.id)} onkeydown={event => navigate(event, index)}>{format.label}</button>
     {/each}
   </div>
-  {#if value === 'jpeg' || value === 'png'}
+  {#if (value === 'jpeg' || value === 'png') && !server}
     <div class="smaller">
       <label class="toggle">
         <input type="checkbox" aria-describedby="smaller-hint" checked={smaller} {disabled}

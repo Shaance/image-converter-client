@@ -1,17 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createQueue } from './queue.svelte';
-import type { ConvertRequest, WorkerResponse } from './pipeline';
+import { SERVER_URL } from './server';
+import type { CancelRequest, ConvertRequest, WorkerRequest, WorkerResponse } from './pipeline';
 
 class FakeWorker extends EventTarget {
   requests: ConvertRequest[] = [];
+  cancels: CancelRequest[] = [];
   terminated = false;
-  postMessage(message: ConvertRequest) { this.requests.push(message); }
+  postMessage(message: WorkerRequest) {
+    if (message.type === 'cancel') { this.cancels.push(message); return; }
+    this.requests.push(message);
+  }
   terminate() { this.terminated = true; }
   send(message: WorkerResponse) { this.dispatchEvent(new MessageEvent('message', { data: message })); }
-  done(request = this.requests.at(-1)!) {
+  done(request = this.requests.at(-1)!, where: 'server' | 'device' = 'device', withThumbnail = true) {
     this.send({ type: 'done', id: request.id, attempt: request.attempt,
-      blob: new Blob(['converted']), thumbnail: new Blob(['thumbnail']),
-      width: 640, height: 480, downscaled: request.downscale });
+      blob: new Blob(['converted']), ...(withThumbnail ? { thumbnail: new Blob(['thumbnail']) } : {}),
+      width: 640, height: 480, downscaled: request.downscale, where });
   }
   tooLarge(request = this.requests.at(-1)!, limit: number | undefined = 16e6) {
     this.send({ type: 'error', id: request.id, attempt: request.attempt,
@@ -236,5 +241,82 @@ describe('queue state and worker boundary', () => {
     expect(urls.size).toBe(0);
     queue.dispose();
     expect(worker.terminated).toBe(true);
+  });
+});
+
+describe('server mode', () => {
+  it('defaults to device mode and sends server: null in every request', async () => {
+    expect(queue.mode).toBe('device');
+    await queue.add([file()]); await turn();
+    expect(worker.requests[0].server).toBeNull();
+    worker.done(); await turn();
+    expect(queue.jobs[0].result?.where).toBe('device');
+  });
+  it('setMode restarts every job and sends SERVER_URL in server mode', async () => {
+    await queue.add([file(), file('second.jpg')]); await turn();
+    const old = worker.requests[0];
+    queue.setMode('server');
+    expect(queue.mode).toBe('server');
+    expect(queue.jobs.map(job => [job.status, job.attempt, job.result]))
+      .toEqual([['queued', 1, undefined], ['queued', 1, undefined]]);
+    await turn();
+    expect(worker.requests).toHaveLength(1); // the old in-flight attempt still occupies the worker
+    worker.done(old); await turn(); // stale attempt-0 result ignored, new attempt dispatched
+    expect(worker.requests.at(-1)).toMatchObject({ server: SERVER_URL, attempt: 1 });
+    worker.done(); await turn();
+    worker.done(undefined, 'server'); await turn();
+    expect(queue.jobs.map(job => [job.status, job.result?.where]))
+      .toEqual([['done', 'device'], ['done', 'server']]);
+    queue.setMode('device');
+    expect(queue.mode).toBe('device');
+    await turn();
+    expect(worker.requests.at(-1)).toMatchObject({ server: null, attempt: 2 });
+    queue.setMode('device'); // no-op
+    expect(queue.jobs[0].attempt).toBe(2);
+  });
+  it('accepts the waiting phase and lets it interleave with converting', async () => {
+    await queue.add([file()]); await turn();
+    const request = worker.requests[0];
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'converting' });
+    expect(queue.jobs[0].phase).toBe('converting');
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'waiting' });
+    expect(queue.jobs[0].phase).toBe('waiting');
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'converting' });
+    expect(queue.jobs[0].phase).toBe('converting');
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'waiting' });
+    expect(queue.jobs[0].phase).toBe('waiting');
+    // loading-codec may not rewind a waiting or converting phase.
+    worker.send({ type: 'phase', id: request.id, attempt: request.attempt, phase: 'loading-codec' });
+    expect(queue.jobs[0].phase).toBe('waiting');
+    worker.done(); await turn();
+    expect(queue.jobs[0].phase).toBeUndefined();
+  });
+  it('stores where on the result and tolerates a missing thumbnail', async () => {
+    await queue.add([file()]); await turn();
+    const request = worker.requests[0];
+    worker.done(request, 'server', false);
+    await turn();
+    expect(queue.jobs[0].status).toBe('done');
+    expect(queue.jobs[0].result?.where).toBe('server');
+    expect(queue.jobs[0].thumbnailUrl).toBeUndefined();
+  });
+  it('sends cancel for the in-flight job on setFormat, setMode, remove and clear', async () => {
+    await queue.add([file(), file('second.jpg')]); await turn();
+    const first = worker.requests[0];
+    queue.setFormat('png');
+    expect(worker.cancels).toEqual([{ type: 'cancel', id: first.id, attempt: first.attempt }]);
+    worker.done(first); await turn(); // the stale answer releases the dispatch
+    const second = worker.requests.at(-1)!;
+    queue.setMode('server');
+    expect(worker.cancels.at(-1)).toEqual({ type: 'cancel', id: second.id, attempt: second.attempt });
+    worker.done(second); await turn();
+    const third = worker.requests.at(-1)!;
+    queue.remove(third.id);
+    expect(worker.cancels.at(-1)).toEqual({ type: 'cancel', id: third.id, attempt: third.attempt });
+    worker.done(third); await turn();
+    await queue.add([file('third.jpg')]); await turn();
+    const fourth = worker.requests.at(-1)!;
+    queue.clear();
+    expect(worker.cancels.at(-1)).toEqual({ type: 'cancel', id: fourth.id, attempt: fourth.attempt });
   });
 });

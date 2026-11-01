@@ -1,4 +1,5 @@
 import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, type InputKind, type OutputFormat } from './formats';
+import { convertOnServer, serverEligible, type ServerOutcome } from './server';
 
 export type ConversionError = {
   code: 'unrecognized' | 'too-large' | 'failed' | 'worker-lost';
@@ -8,15 +9,20 @@ export type ConversionError = {
 export type ConvertRequest = {
   type: 'convert'; id: string; attempt: number; file: File; kind: InputKind;
   format: OutputFormat; maxArea: number | null; downscale: boolean; smaller: boolean;
+  server: string | null;
 };
+// Sent by the queue when a job is invalidated while in flight; the worker aborts
+// that (id, attempt) and answers with a normal error so dispatch is released.
+export type CancelRequest = { type: 'cancel'; id: string; attempt: number };
+export type WorkerRequest = ConvertRequest | CancelRequest;
 export type WorkerResponse =
-  | { type: 'phase'; id: string; attempt: number; phase: 'loading-codec' | 'converting' }
-  | { type: 'done'; id: string; attempt: number; blob: Blob; thumbnail: Blob;
-      width: number; height: number; downscaled: boolean }
+  | { type: 'phase'; id: string; attempt: number; phase: 'loading-codec' | 'converting' | 'waiting' }
+  | { type: 'done'; id: string; attempt: number; blob: Blob; thumbnail?: Blob;
+      width: number; height: number; downscaled: boolean; where: 'server' | 'device' }
   | ({ type: 'error'; id: string; attempt: number } & ConversionError);
 
 type Fit = { width: number; height: number };
-type Phase = (phase: 'loading-codec' | 'converting') => void;
+type Phase = (phase: 'loading-codec' | 'converting' | 'waiting') => void;
 
 const AVIF_ENCODE_OPTIONS = { quality: 50, speed: 6 };
 const JXL_ENCODE_OPTIONS = { quality: 75, effort: 5 };
@@ -222,7 +228,59 @@ export async function thumbnail(bitmap: ImageBitmap): Promise<Blob> {
   }
 }
 
-export async function convert(request: ConvertRequest, phase: Phase) {
+// Thumbnail and dimensions for a server result are best effort: decode the
+// result blob when the browser can (JXL/TIFF often cannot), else the source
+// file, else report no thumbnail and 0x0.
+async function serverPreview(blob: Blob, request: ConvertRequest): Promise<{
+  thumbnail?: Blob; width: number; height: number;
+}> {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    try {
+      return { thumbnail: await thumbnail(bitmap), width: bitmap.width, height: bitmap.height };
+    } finally {
+      bitmap.close();
+    }
+  } catch { /* The result format may not decode in this browser. */ }
+  try {
+    const source = await decode(request.file, request.kind);
+    try {
+      return { thumbnail: await thumbnail(source), width: source.width, height: source.height };
+    } finally {
+      source.close();
+    }
+  } catch {
+    return { width: 0, height: 0 };
+  }
+}
+
+export async function convert(request: ConvertRequest, phase: Phase, signal?: AbortSignal) {
+  // Server mode: eligible files are uploaded first; anything the server cannot
+  // do falls through to the on-device path below. An explicit downscale attempt
+  // never goes to the server: the server does not resize, so the re-sent file
+  // would come back full size. A cancelled job (invalidated while in flight)
+  // throws instead: it must not fall back to on-device work.
+  if (request.server && !request.downscale && serverEligible(request.kind, request.format)) {
+    let outcome: ServerOutcome;
+    try {
+      outcome = await convertOnServer({
+        server: request.server, file: request.file, kind: request.kind,
+        format: request.format, phase, signal,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw { code: 'failed' };
+      throw error;
+    }
+    if ('fallback' in outcome) {
+      if (signal?.aborted) throw { code: 'failed' };
+      // The server could not do it: continue on the device, and leave the
+      // "waiting for the server" phase behind right away.
+      phase('converting');
+    } else {
+      const preview = await serverPreview(outcome.blob, request);
+      return { blob: outcome.blob, ...preview, downscaled: false, where: 'server' as const };
+    }
+  }
   let maxArea = request.maxArea;
   if (request.format === 'jxl') maxArea = Math.min(maxArea ?? JXL_MAX_PIXELS, JXL_MAX_PIXELS);
   if (request.kind === 'raw') maxArea = Math.min(maxArea ?? RAW_MAX_PIXELS, RAW_MAX_PIXELS);
@@ -265,7 +323,7 @@ export async function convert(request: ConvertRequest, phase: Phase) {
     }
     const blob = await encode(bitmap, request.format, phase, request.smaller);
     const preview = await thumbnail(bitmap);
-    return { blob, thumbnail: preview, width: bitmap.width, height: bitmap.height, downscaled };
+    return { blob, thumbnail: preview, width: bitmap.width, height: bitmap.height, downscaled, where: 'device' as const };
   } catch (error) {
     // A RAW oversize is known from the file metadata before any bitmap exists.
     if (pixels === undefined && typeof error === 'object' && error !== null
