@@ -4,8 +4,8 @@
   import { JXL_MAX_PIXELS, OUTPUT_FORMATS, RAW_MAX_PIXELS, type OutputFormat } from '../formats';
   import { formatBytes, outputName } from '../names';
   import Icons from './Icons.svelte';
-  let { job, format, server, onremove, ondownscale }: {
-    job: Job; format: OutputFormat; server: boolean; onremove: () => void; ondownscale: () => void;
+  let { job, format, server, single, onremove, ondownscale }: {
+    job: Job; format: OutputFormat; server: boolean; single: boolean; onremove: () => void; ondownscale: () => void;
   } = $props();
   const label = $derived(OUTPUT_FORMATS.find(item => item.id === format)!.label);
   const name = $derived(outputName(job.name, format));
@@ -59,40 +59,43 @@
     {/key}
   </div>
   <div class="actions">
-    {#if job.status === 'done' && job.result}
-      <a href={job.result.url} download={name} aria-label={`Download ${name}`}><Icons name="download" /><span>{label}</span></a>
+    {#if job.status === 'done' && job.result && !single}
+      <a href={job.result.url} download={name} aria-label={`Download ${name}`}><Icons name="download" size={18} /><span>{label}</span></a>
     {/if}
-    <button class="remove" data-remove={job.id} aria-label={`Remove ${job.name}`} onclick={onremove}><Icons name="remove" size={14} /></button>
+    <button class="remove" data-remove={job.id} aria-label={`Remove ${job.name}`} onclick={onremove}><Icons name="remove" size={18} /></button>
   </div>
 </div>
 
 <style>
-  .row { display: grid; grid-template-columns: 44px 1fr 120px 200px 120px; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--rule); scroll-margin-bottom: 160px; }
+  .row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 200px 160px; align-items: center; gap: 16px; min-height: 64px; padding: 10px 0; border-bottom: 1px solid var(--rule); scroll-margin-bottom: 160px; }
   .thumbnail { width: 44px; height: 44px; border-radius: 6px; background: var(--surface); overflow: hidden; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
   img { width: 100%; height: 100%; object-fit: cover; }
   .details { min-width: 0; }
   .name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .meta { font-size: 13px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
-  .status { display: grid; font-size: 13px; color: var(--muted); grid-column: 3 / 5; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .status { grid-column: 3; display: grid; font-size: 13px; color: var(--muted); }
   .status-content { grid-area: 1 / 1; max-width: 200px; }
   .done { display: flex; align-items: center; gap: 6px; color: var(--teal); }
   .error, .downscale { color: var(--terracotta); }
   .downscale { display: block; padding: 0; margin-top: 6px; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
   .track { height: 3px; background: var(--rule); overflow: hidden; margin-top: 6px; width: 120px; }
   .track span { display: block; width: 40%; height: 100%; background: var(--teal); }
-  .actions { grid-column: 5; display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
-  a { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
-  .remove { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; color: var(--muted); flex-shrink: 0; }
+  .actions { grid-column: 4; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+  .actions a, .remove { height: 44px; min-width: 44px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 999px; color: var(--muted); font-size: 14px; }
+  .remove { width: 44px; padding: 0; flex-shrink: 0; }
+  @media (hover: hover) and (pointer: fine) {
+    .actions a:hover, .remove:hover { background: var(--surface); color: var(--ink); }
+  }
   @media (prefers-reduced-motion: no-preference) {
     .track span { width: 30%; animation: progress var(--progress) linear infinite; }
     @keyframes progress { from { transform: translateX(-100%); } to { transform: translateX(334%); } }
   }
   @media (max-width: 719px) {
-    .row { grid-template-columns: 40px 1fr auto; gap: 6px 12px; padding: 12px 0; }
+    .row { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 6px 12px; min-height: 60px; }
     .thumbnail { width: 40px; height: 40px; }
     .status { grid-column: 2; grid-row: 2; }
     .actions { grid-column: 3; grid-row: 1 / 3; }
-    a { padding: 10px 0; gap: 4px; }
+    .actions a { padding: 0; }
     .actions a span { display: none; }
   }
 </style>

@@ -274,6 +274,17 @@ describe('server mode', () => {
     queue.setMode('device'); // no-op
     expect(queue.jobs[0].attempt).toBe(2);
   });
+  it('sends smaller: false in server mode even when the preference is on', async () => {
+    await queue.add([file()]); await turn();
+    const first = worker.requests[0];
+    worker.done(first); await turn();
+    queue.setSmaller(true); await turn();
+    const second = worker.requests.at(-1)!;
+    expect(second).toMatchObject({ smaller: true, server: null });
+    queue.setMode('server');
+    worker.done(second); await turn(); // stale attempt-1 answer releases the dispatch
+    expect(worker.requests.at(-1)).toMatchObject({ server: SERVER_URL, smaller: false, attempt: 2 });
+  });
   it('accepts the waiting phase and lets it interleave with converting', async () => {
     await queue.add([file()]); await turn();
     const request = worker.requests[0];

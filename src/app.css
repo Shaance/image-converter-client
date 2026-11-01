@@ -20,6 +20,7 @@
   --row-stagger: 40ms;
   --press: 100ms;
   --progress: 1.2s;
+  --morph: 300ms;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -50,10 +51,14 @@ button, input { font: inherit; }
 button { border: 0; background: none; cursor: pointer; }
 button:disabled { cursor: default; }
 a { color: var(--teal); text-decoration: none; }
-a:hover { color: var(--teal-dark); }
 button:focus-visible, a:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--teal); outline-offset: 2px;
 }
+/* Controls with their own pressed state handle taps themselves. */
+button, a, input, label:has(input) { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+::selection { background: rgba(15, 110, 110, 0.25); }
+@media (prefers-color-scheme: dark) { ::selection { background: rgba(95, 196, 189, 0.3); } }
+@media (hover: hover) and (pointer: fine) { a:hover { color: var(--teal-dark); } }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .label { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 500; white-space: nowrap; }
 .reveal { animation: reveal-opacity var(--reveal) var(--ease-out) var(--delay, 0ms) backwards; }
@@ -62,5 +67,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .reveal { animation-name: reveal-rise; }
   @keyframes reveal-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   button, a, label:has(input:not(:disabled)) { transition: transform var(--press) var(--ease-out); }
-  button:not(:disabled):active, a:active, label:has(input:not(:disabled)):active { transform: scale(.98); }
+  button:not(:disabled):active, a:active, label:has(input:not(:disabled)):active { transform: scale(.96); }
 }
+
+/* Empty <-> busy morph (App.svelte's view-transition helper). The pseudo tree
+   lives in the top layer, so these rules must stay global. */
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
+  animation-duration: var(--morph);
+  animation-timing-function: var(--ease-out);
+}
+/* The drop zone changes size between states; keep its snapshot from stretching text. */
+::view-transition-old(drop), ::view-transition-new(drop) { height: 100%; object-fit: none; object-position: center; }
+/* The old prompt leaves quickly so the two prompts never read as overlapping text. */
+::view-transition-old(drop) { animation: vt-fade-out var(--fast) var(--ease-out) forwards; }
+.morph-in::view-transition-old(hero) { animation: vt-rise-out var(--fast) var(--ease-out) forwards; }
+.morph-in::view-transition-new(list), .morph-in::view-transition-new(actions) {
+  animation: vt-rise-in var(--standard) var(--ease-out) 120ms backwards;
+}
+.morph-out::view-transition-old(list), .morph-out::view-transition-old(actions) {
+  animation: vt-fade-out var(--fast) var(--ease-out) forwards;
+}
+.morph-out::view-transition-new(hero) { animation: vt-rise-in var(--standard) var(--ease-out) var(--stagger) backwards; }
+@keyframes vt-rise-out { to { opacity: 0; transform: translateY(-6px); } }
+@keyframes vt-rise-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes vt-fade-out { to { opacity: 0; } }

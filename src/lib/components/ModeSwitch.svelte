@@ -1,34 +1,33 @@
 <script lang="ts">
-  import { SERVER_URL } from '../server';
   import type { ConversionMode } from '../queue.svelte';
   let { mode, onchange, disabled = false }: {
     mode: ConversionMode; onchange: (mode: ConversionMode) => void; disabled?: boolean;
   } = $props();
-  const host = $derived(new URL(SERVER_URL).host);
 </script>
 
-<div class="switch">
-  <fieldset aria-label="Conversion mode">
-    <label class:selected={mode === 'device'}><input class="visually-hidden" type="radio" name="mode"
-      value="device" checked={mode === 'device'} {disabled} onchange={() => onchange('device')} />On device</label>
-    <label class:selected={mode === 'server'}><input class="visually-hidden" type="radio" name="mode"
-      value="server" checked={mode === 'server'} {disabled} onchange={() => onchange('server')} />Server</label>
-  </fieldset>
-  {#if mode === 'server'}
-    <p class="server-note">Photos are uploaded to {host}, converted, and deleted right away.</p>
-  {/if}
-</div>
+<fieldset class="switch" class:server={mode === 'server'} aria-label="Conversion mode">
+  <span class="thumb" aria-hidden="true"></span>
+  <label class:selected={mode === 'device'}><input class="visually-hidden" type="radio" name="mode"
+    value="device" checked={mode === 'device'} {disabled} onchange={() => onchange('device')} />On device</label>
+  <label class:selected={mode === 'server'}><input class="visually-hidden" type="radio" name="mode"
+    value="server" checked={mode === 'server'} {disabled} onchange={() => onchange('server')} />Server</label>
+</fieldset>
 
 <style>
-  .switch { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-  fieldset { display: flex; margin: 0; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; gap: 2px; font-size: 13px; }
-  label { padding: 7px 14px; border-radius: 999px; display: flex; align-items: center; gap: 6px; }
-  .selected { background: var(--ink); color: var(--bg); font-weight: 500; }
+  /* Equal-width segments with one sliding ink thumb: the switch keeps its size
+     in both modes, so nothing below the header moves. */
+  .switch { position: relative; display: grid; grid-template-columns: 1fr 1fr; min-width: 0; margin: 0; padding: 3px; border: 1px solid var(--rule); border-radius: 999px; font-size: 13px; }
+  .thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2); border-radius: 999px; background: var(--ink); }
+  .switch.server .thumb { transform: translateX(100%); }
+  label { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; padding: 7px 14px; border-radius: 999px; white-space: nowrap; font-weight: 500; color: var(--muted); cursor: pointer; }
+  /* Same weight in both states, so the segments never change width. */
+  .selected { color: var(--bg); }
   label:has(:focus-visible) { outline: 2px solid var(--teal); outline-offset: 2px; }
-  label:has(input:disabled) { color: var(--faint); }
-  .server-note { margin: 0; font-size: 12px; color: var(--muted); text-align: right; }
-  @media (max-width: 719px) {
-    label { padding: 6px 11px; }
-    .server-note { text-align: left; }
+  label:has(input:disabled) { color: var(--faint); cursor: default; }
+  @media (prefers-reduced-motion: no-preference) {
+    .thumb { transition: transform var(--standard) var(--ease-out); }
+    label { transition: color var(--standard) var(--ease-out); }
   }
+  @media (max-width: 719px) { label { padding: 6px 11px; } }
+  @media (max-width: 389px) { label { padding: 6px 9px; } }
 </style>

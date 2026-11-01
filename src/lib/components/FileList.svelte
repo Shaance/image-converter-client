@@ -3,10 +3,9 @@
   import { slide, fade } from 'svelte/transition';
   import type { createQueue } from '../queue.svelte';
   import { formatBytes } from '../names';
-  import FormatChips from './FormatChips.svelte';
   import FileRow from './FileRow.svelte';
-  let { queue, onclear, onempty }: {
-    queue: ReturnType<typeof createQueue>; onclear: () => void; onempty: () => void;
+  let { queue, onclear, onremovelast }: {
+    queue: ReturnType<typeof createQueue>; onclear: () => void; onremovelast: (id: string) => void;
   } = $props();
   let header: HTMLHeadingElement;
   let list: HTMLUListElement;
@@ -29,9 +28,10 @@
     return matchMedia('(prefers-reduced-motion: reduce)').matches ? fade(node, { duration }) : slide(node, { duration });
   }
   async function remove(id: string) {
+    // Removing the last row returns to the empty state through App's morph.
+    if (queue.fileCount === 1) { onremovelast(id); return; }
     const next = queue.jobs[queue.jobs.findIndex(job => job.id === id) + 1]?.id;
     queue.remove(id);
-    if (!queue.fileCount) { onempty(); return; }
     await tick();
     const button = next ? Array.from(list.querySelectorAll<HTMLButtonElement>('[data-remove]')).find(item => item.dataset.remove === next) : undefined;
     (button ?? header).focus();
@@ -42,32 +42,33 @@
   <div class="toolbar">
     <div class="summary" aria-live="polite">
       <h2 id="file-count" tabindex="-1" bind:this={header}>{queue.fileCount} {queue.fileCount === 1 ? 'file' : 'files'}</h2>
-      <span>{#if !queue.settled}{formatBytes(queue.bytesIn)} in · {queue.doneCount} of {queue.fileCount} done
+      <span class="nums">{#if !queue.settled}{formatBytes(queue.bytesIn)} in · {queue.doneCount} of {queue.fileCount} done
         {:else if queue.failedCount}{queue.doneCount} ready · {queue.failedCount} need attention
         {:else}{formatBytes(queue.bytesIn)} → {formatBytes(queue.bytesOut)} · all done{/if}</span>
     </div>
-    <div class="formats"><span class="label">To</span><FormatChips value={queue.format} onchange={queue.setFormat} smaller={queue.smaller} onsmaller={queue.setSmaller} server={queue.mode === 'server'} compact /></div>
     <button class="clear" onclick={onclear}>Clear all</button>
   </div>
   <ul bind:this={list}>
     {#each queue.jobs as job (job.id)}
       <li data-job={job.id} use:insertion out:removal>
-        <FileRow {job} format={queue.format} server={queue.mode === 'server'} onremove={() => remove(job.id)} ondownscale={() => queue.convertDownscaled(job.id)} />
+        <FileRow {job} format={queue.format} server={queue.mode === 'server'} single={queue.fileCount === 1}
+          onremove={() => remove(job.id)} ondownscale={() => queue.convertDownscaled(job.id)} />
       </li>
     {/each}
   </ul>
 </section>
 
 <style>
-  section { margin-top: 40px; }
-  .toolbar { display: flex; align-items: flex-end; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--ink); flex-wrap: wrap; }
-  .summary { display: flex; align-items: baseline; gap: 14px; flex: 1; }
+  section { view-transition-name: list; margin-top: 40px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--ink); }
+  .summary { display: flex; align-items: baseline; flex: 1; min-width: 0; gap: 14px; }
   h2 { font: 400 30px var(--serif); margin: 0; white-space: nowrap; }
-  .summary span { font-size: 13px; color: var(--muted); }
-  .formats { display: flex; align-items: baseline; gap: 16px; }
-  .clear { font-size: 13px; color: var(--muted); padding: 0; margin-left: 8px; white-space: nowrap; }
+  .nums { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .clear { min-height: 44px; padding: 0 10px; border-radius: 999px; font-size: 13px; color: var(--muted); white-space: nowrap; }
   ul { list-style: none; padding: 0; margin: 0; }
   li:global(.insert) { animation: row-opacity var(--standard) var(--ease-out) var(--row-delay) backwards; }
+  /* The transitioned add runs inside a view transition: no double choreography. */
+  :global(html.morphing) li:global(.insert) { animation: none; }
   @keyframes row-opacity { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: no-preference) {
     li:global(.insert) { animation-name: row-rise; }
@@ -75,10 +76,9 @@
   }
   @media (max-width: 719px) {
     section { margin-top: 28px; padding-bottom: 24px; }
-    .toolbar { display: grid; grid-template-columns: 1fr auto; padding: 0; gap: 0 12px; border: 0; }
-    .summary { flex-wrap: wrap; gap: 6px 14px; padding-bottom: 12px; }
+    .toolbar { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 12px; }
+    .summary { flex-wrap: wrap; gap: 6px 14px; }
     h2 { font-size: 24px; }
-    .clear { align-self: start; margin: 6px 0 0; grid-column: 2; grid-row: 1; }
-    .formats { grid-column: 1 / -1; border-top: 1px solid var(--ink); padding: 14px 0 4px; gap: 6px; align-items: baseline; }
+    .clear { grid-column: 2; grid-row: 1; }
   }
 </style>
