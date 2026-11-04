@@ -13,6 +13,7 @@
   --serif: "Newsreader", Georgia, "Times New Roman", serif;
   --sans: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-slide: cubic-bezier(0.32, 0.72, 0, 1);
   --fast: 160ms;
   --standard: 220ms;
   --reveal: 700ms;

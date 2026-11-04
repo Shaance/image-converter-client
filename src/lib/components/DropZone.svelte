@@ -70,6 +70,11 @@
   .preparing .prompt { color: var(--muted); }
   @media (prefers-reduced-motion: no-preference) {
     label { transition: border-color var(--fast) var(--ease-out), background var(--fast) var(--ease-out), transform var(--press) var(--ease-out); }
+    /* Drag-over lifts the zone and the icon; entering uses --standard, leaving
+       falls back to the base --press so the settle stays snappy. */
+    label.dragging { transform: scale(1.015); transition: border-color var(--fast) var(--ease-out), background var(--fast) var(--ease-out), transform var(--standard) var(--ease-out); }
+    .icon { transition: transform var(--standard) var(--ease-out); }
+    .dragging .icon { transform: translateY(-3px); }
     .preparing .icon { animation: breathe var(--progress) ease-in-out infinite; }
     @keyframes breathe { 50% { opacity: .35; } }
   }

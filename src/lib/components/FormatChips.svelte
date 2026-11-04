@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import { OUTPUT_FORMATS, type OutputFormat } from '../formats';
   let { value, onchange, smaller, onsmaller, server = false, disabled = false }: {
     value: OutputFormat; onchange: (format: OutputFormat) => void;
@@ -8,6 +9,27 @@
   // and shown off, but `smaller` itself is kept for when it applies again.
   const applicable = $derived((value === 'jpeg' || value === 'png') && !server);
   const shown = $derived(smaller && applicable);
+  // Sliding pill behind the active chip: measured from the real button so it
+  // survives font loads and wrapping. `ready` flips once measured so the active
+  // chip can switch from its own background to the pill (same colour, no flash).
+  let group: HTMLElement;
+  let indicator: HTMLSpanElement;
+  let ready = $state(false);
+  function move() {
+    const active = group?.querySelector<HTMLButtonElement>('button[aria-checked="true"]');
+    if (!active || !indicator) return;
+    indicator.style.width = `${active.offsetWidth}px`;
+    indicator.style.height = `${active.offsetHeight}px`;
+    indicator.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
+    ready = true;
+  }
+  onMount(() => {
+    move();
+    const ro = new ResizeObserver(move);
+    ro.observe(group);
+    return () => ro.disconnect();
+  });
+  $effect(() => { value; void tick().then(move); });
   function navigate(event: KeyboardEvent, index: number) {
     const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
     if (!direction) return;
@@ -20,7 +42,8 @@
 </script>
 
 <div class="chips">
-  <div role="radiogroup" aria-label="Output format">
+  <div role="radiogroup" aria-label="Output format" class:ready bind:this={group}>
+    <span class="indicator" bind:this={indicator} aria-hidden="true"></span>
     {#each OUTPUT_FORMATS as format, index}
       <button type="button" role="radio" aria-checked={value === format.id}
         tabindex={value === format.id ? 0 : -1} {disabled}
@@ -44,7 +67,8 @@
 
 <style>
   .chips { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-  [role="radiogroup"] { display: flex; flex-wrap: wrap; gap: 6px; }
+  [role="radiogroup"] { position: relative; display: flex; flex-wrap: wrap; gap: 6px; }
+  .indicator { position: absolute; left: 0; top: 0; width: 0; height: 0; border-radius: 999px; background: var(--ink); }
   .smaller { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
   .toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; width: fit-content; font-size: 13px; color: var(--muted); white-space: nowrap; cursor: pointer; }
   .toggle:has(input:disabled) { cursor: default; color: var(--faint); }
@@ -58,13 +82,16 @@
   .hint { display: grid; padding-left: 46px; font-size: 12px; color: var(--muted); }
   .hint span { grid-area: 1 / 1; }
   .hint span:not(.active) { visibility: hidden; }
-  button { padding: 8px 14px; border: 1px solid var(--rule); border-radius: 999px; color: var(--muted); font-size: 13px; transition: background var(--fast) var(--ease-out), color var(--fast) var(--ease-out); }
+  button { position: relative; z-index: 1; padding: 8px 14px; border: 1px solid var(--rule); border-radius: 999px; color: var(--muted); font-size: 13px; transition: background var(--fast) var(--ease-out), color var(--fast) var(--ease-out), border-color var(--fast) var(--ease-out); }
   button[aria-checked="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); font-weight: 500; }
+  /* Once the pill is measured, the active chip shows through it instead of its own background. */
+  [role="radiogroup"].ready button[aria-checked="true"] { background: transparent; border-color: transparent; }
   button:disabled { color: var(--faint); }
   @media (prefers-reduced-motion: no-preference) {
+    .indicator { transition: transform var(--standard) var(--ease-slide), width var(--standard) var(--ease-slide), height var(--standard) var(--ease-slide); }
     .toggle input, .toggle input::after { transition: background var(--fast) var(--ease-out), border-color var(--fast) var(--ease-out), transform var(--fast) var(--ease-out); }
     .hint span { transition: opacity var(--fast) var(--ease-out), visibility var(--fast); }
     .hint span:not(.active) { opacity: 0; }
-    button { transition: background var(--fast) var(--ease-out), color var(--fast) var(--ease-out), transform var(--press) var(--ease-out); }
+    button { transition: background var(--fast) var(--ease-out), color var(--fast) var(--ease-out), border-color var(--fast) var(--ease-out), transform var(--press) var(--ease-out); }
   }
 </style>

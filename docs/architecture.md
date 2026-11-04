@@ -381,17 +381,33 @@ is reserved for disabled states.
   reduced motion). Heights therefore never change between states. The settings
   block itself is rendered once by App below the drop zone in both empty and busy
   states — same instance, it never relocates.
-- Row insertion: fade + 4px rise, 220 ms, 40 ms stagger for the first 8 rows of an
+- Row insertion: fade + 8px rise, 220 ms, 40 ms stagger for the first 8 rows of an
   add; later rows appear instantly.
-- Row removal: Svelte `slide`, 160 ms.
-- Drop-zone dragover: border solid teal + background tint, 160 ms.
+- Row removal: Svelte `slide`, 220 ms, cubic-in-out easing (the row collapses to
+  zero height, so siblings close up instead of jumping); reduced motion is a
+  160 ms fade.
+- Drop-zone dragover: border solid teal + background tint 160 ms, plus the zone
+  scales to 1.015 and the icon rises 3 px over `--standard` (leaving falls back to
+  the 100 ms press timing); reduced motion keeps the colour change only.
 - Converting: 3px track, a 30% teal segment sliding left→right on a 1.2 s linear
   loop; reduced motion shows a static 40% segment.
-- Done: status crossfade 160 ms, no scale pop. Download bar: background/colour
-  `--standard` when it becomes ready, label stacked-cell crossfade `--fast`.
-  Pressables: `scale(0.96)` 100 ms down-state; hover fills only under
-  `@media (hover: hover) and (pointer: fine)`; chip selection background 160 ms.
-- Nothing else animates. No hover lift on rows, no celebration.
+- Done: the track stays mounted through the status crossfade (160 ms) and its
+  segment glides to full over `--morph` (300 ms) ease-out while the check pops in
+  (scale .8→1, ~240 ms); the track then fades out. Reduced motion: instant swap,
+  no track.
+- Download bar: background/colour `--standard` when it becomes ready, label
+  stacked-cell crossfade `--fast`, and a quiet teal fill (`opacity .16`) inside
+  the pill that eases `scaleX` over 280 ms with each settled row (hidden once
+  ready). When the download becomes available a toast rises in bottom-right
+  (`fly` y 14→0, 260 ms ease-out), auto-dismisses after 4 s, and exits with
+  y 0→8 over 200 ms; reduced motion is a 160 ms fade. The toast links to the same
+  download as the pill.
+- Pressables: `scale(0.96)` 100 ms down-state; hover fills only under
+  `@media (hover: hover) and (pointer: fine)`; chip selection is a sliding pill
+  (indicator measured from the active button, `transform`+`width` over
+  `--standard` with `--ease-slide: cubic-bezier(0.32, 0.72, 0, 1)`), with the
+  chip's own background 160 ms as the pre-measurement fallback.
+- Nothing else animates. No hover lift on rows.
 
 ## Libraries (pinned)
 

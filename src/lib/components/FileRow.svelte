@@ -49,7 +49,6 @@
         {#if job.status === 'done'}<span class="done"><Icons name="check" /> Done</span>
         {:else if job.status === 'converting'}
           <span>{job.phase === 'waiting' ? 'Waiting for the server…' : job.kind === 'heic' && job.phase === 'loading-codec' ? 'Loading HEIC decoder…' : job.kind === 'raw' && job.phase === 'loading-codec' ? 'Loading RAW decoder…' : 'Converting…'}</span>
-          <div class="track" aria-hidden="true"><span></span></div>
         {:else if job.status === 'queued'}Queued
         {:else}{error}{/if}
         {#if job.status === 'awaiting-downscale'}
@@ -57,6 +56,9 @@
         {/if}
       </div>
     {/key}
+    {#if job.status === 'converting' || job.status === 'done'}
+      <div class="track" class:settle={job.status === 'done'} aria-hidden="true"><span></span></div>
+    {/if}
   </div>
   <div class="actions">
     {#if job.status === 'done' && job.result && !single}
@@ -78,7 +80,7 @@
   .done { display: flex; align-items: center; gap: 6px; color: var(--teal); }
   .error, .downscale { color: var(--terracotta); }
   .downscale { display: block; padding: 0; margin-top: 6px; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
-  .track { height: 3px; background: var(--rule); overflow: hidden; margin-top: 6px; width: 120px; }
+  .track { grid-area: 2 / 1; height: 3px; background: var(--rule); overflow: hidden; margin-top: 6px; width: 120px; }
   .track span { display: block; width: 40%; height: 100%; background: var(--teal); }
   .actions { grid-column: 4; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
   .actions a, .remove { height: 44px; min-width: 44px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 999px; color: var(--muted); font-size: 14px; }
@@ -89,6 +91,17 @@
   @media (prefers-reduced-motion: no-preference) {
     .track span { width: 30%; animation: progress var(--progress) linear infinite; }
     @keyframes progress { from { transform: translateX(-100%); } to { transform: translateX(334%); } }
+    /* On done the segment glides to full over --morph, the track fades out, and
+       the check pops in — the completion reads as one continuous motion. */
+    .track.settle span { animation: settle var(--morph) var(--ease-out) forwards; }
+    @keyframes settle { to { width: 100%; transform: translateX(0); } }
+    .track.settle { animation: track-out var(--fast) var(--ease-out) var(--morph) forwards; }
+    @keyframes track-out { to { opacity: 0; } }
+    .done { animation: pop calc(var(--standard) * 1.1) var(--ease-out); }
+    @keyframes pop { from { opacity: 0; transform: scale(.8); } }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .track.settle { display: none; }
   }
   @media (max-width: 719px) {
     .row { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 6px 12px; min-height: 60px; }
