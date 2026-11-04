@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { slide, fade } from 'svelte/transition';
+  import { cubicInOut } from 'svelte/easing';
   import type { createQueue } from '../queue.svelte';
   import { formatBytes } from '../names';
   import FileRow from './FileRow.svelte';
@@ -25,8 +26,14 @@
     return { destroy() { seen.delete(id); } };
   }
   function removal(node: Element) {
-    const duration = parseFloat(getComputedStyle(node).getPropertyValue('--fast'));
-    return matchMedia('(prefers-reduced-motion: reduce)').matches ? fade(node, { duration }) : slide(node, { duration });
+    const css = getComputedStyle(node);
+    const fast = parseFloat(css.getPropertyValue('--fast'));
+    const standard = parseFloat(css.getPropertyValue('--standard'));
+    // The row collapses to zero height while sliding away, so siblings close up
+    // instead of jumping; reduced motion keeps a plain fade.
+    return matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? fade(node, { duration: fast })
+      : slide(node, { duration: standard, easing: cubicInOut });
   }
   async function remove(id: string) {
     // Removing the last row returns to the empty state through App's morph.
@@ -71,7 +78,7 @@
   @keyframes row-opacity { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: no-preference) {
     li:global(.insert) { animation-name: row-rise; }
-    @keyframes row-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes row-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   }
   @media (max-width: 719px) {
     section { margin-top: 28px; padding-bottom: 24px; }
